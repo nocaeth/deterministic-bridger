@@ -120,10 +120,11 @@ Both `MainnetStablecoinBridgeRouter.receiverFor(address)` and `SavingsXDaiReceiv
 ## Deployment Order
 
 1. Configure `.env` from `.env.example`.
-2. Deploy `SavingsXDaiReceiver` and `SavingsXDaiReceiverFactory` on Gnosis with `SAVINGS_XDAI_ADAPTER`.
-3. Deploy `MainnetStablecoinBridgeRouter` on Ethereum with `MAINNET_TOKEN`, `ETHEREUM_XDAI_BRIDGE`, `SAVINGS_XDAI_RECEIVER_FACTORY`, and `GNOSIS_SINGLETON`.
-4. Run fork smoke checks against the exact deployment configuration.
-5. Deploy the Tenderly `Deterministic-Bridger` Action, configure its webhook in the frontend, and disable or delete older prefixed Actions if they exist.
+2. Install ignored Foundry dependencies with `npm run install:foundry`.
+3. Deploy and Sourcify-verify `SavingsXDaiReceiver` and `SavingsXDaiReceiverFactory` on Gnosis with `npm run deploy:gnosis`.
+4. Deploy and Sourcify-verify `MainnetStablecoinBridgeRouter` on Ethereum with `npm run deploy:mainnet`.
+5. Run fork smoke checks against the exact deployment configuration.
+6. Deploy the Tenderly `Deterministic-Bridger` Action, configure its webhook in the frontend, and disable or delete older prefixed Actions if they exist.
 
 ## Trust Boundaries
 

@@ -10,6 +10,7 @@ Use this as the release runbook for the router, Gnosis receiver system, and Tend
 - Confirm `router.receiverFor(deterministicReceiver)` matches `factory.predict(deterministicReceiver)`.
 - Prepare deployment secrets for the script runner: `MAINNET_RPC_URL`, `GNOSIS_RPC_URL`, and a dedicated
   deployment `PRIVATE_KEY`.
+- Install Foundry dependencies into ignored `lib/` with `npm run install:foundry`.
 - Run:
   - `forge fmt --check`
   - `forge build`
@@ -21,16 +22,19 @@ Use this as the release runbook for the router, Gnosis receiver system, and Tend
 
 ## Deploy Gnosis Side
 
-- Run the Gnosis deployment script with `GNOSIS_RPC_URL` and the deployment `PRIVATE_KEY`.
+- Run `npm run deploy:gnosis` with `GNOSIS_RPC_URL`, `SAVINGS_XDAI_ADAPTER`, and the deployment
+  `PRIVATE_KEY`.
 - Deploy `SavingsXDaiReceiver` singleton and `SavingsXDaiReceiverFactory` first.
+- The wrapper script broadcasts with `--verify --verifier sourcify`.
 - Verify the factory points at the singleton you intended to deploy.
 - Verify `factory.predict(deterministicReceiver)` returns the expected address on a fork or dry run.
 
 ## Deploy Mainnet Router
 
-- Run the mainnet router script with `MAINNET_RPC_URL` and the same deployment `PRIVATE_KEY` only if that
-  key is intended for mainnet use.
+- Run `npm run deploy:mainnet` with `MAINNET_RPC_URL`, `MAINNET_TOKEN`,
+  `SAVINGS_XDAI_RECEIVER_FACTORY`, `GNOSIS_SINGLETON`, and the deployment `PRIVATE_KEY`.
 - Deploy `MainnetStablecoinBridgeRouter` after the Gnosis side is live.
+- The wrapper script broadcasts with `--verify --verifier sourcify`.
 - Verify the router is wired to:
   - the intended token
   - the canonical Ethereum xDai bridge
@@ -55,6 +59,7 @@ Use this as the release runbook for the router, Gnosis receiver system, and Tend
 ## Post-Deploy Verification
 
 - Register a fresh router receipt with `op=register`.
+- Confirm Sourcify reports exact matches for the deployed contracts.
 - Confirm `op=register` rejects stale, malformed, or unrelated receipts.
 - Fund or simulate a receiver and confirm `op=process` calls `deployAndConvert` only for a receiver that already has xDAI.
 - Confirm `WATCHTOWER_BATCH_SIZE` and `WATCHTOWER_MAX_AGE_SECONDS` behave as expected.

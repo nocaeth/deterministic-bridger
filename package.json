@@ -4,6 +4,9 @@
   "type": "commonjs",
   "scripts": {
     "check:actions": "node --check actions/receiverQueue.js",
+    "deploy:gnosis": "bash script/deploy-gnosis-sourcify.sh",
+    "deploy:mainnet": "bash script/deploy-mainnet-sourcify.sh",
+    "install:foundry": "forge install foundry-rs/forge-std --no-git --shallow",
     "test:actions": "node --test actions/test/*.test.js"
   },
   "dependencies": {

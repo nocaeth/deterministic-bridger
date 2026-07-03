@@ -194,6 +194,7 @@ PRIVATE_KEY=
 Run the local checks:
 
 ```bash
+npm run install:foundry
 forge test
 forge fmt --check
 forge build
@@ -208,11 +209,13 @@ Optional fork smoke checks are no-ops unless RPC URLs are configured:
 MAINNET_RPC_URL=$MAINNET_RPC_URL GNOSIS_RPC_URL=$GNOSIS_RPC_URL forge test --match-contract ForkSmokeTest
 ```
 
-Deploy Gnosis contracts first, then the mainnet router:
+Deploy Gnosis contracts first, then the mainnet router. The wrapper scripts
+always pass `--verify --verifier sourcify`, so deployed contracts are submitted
+to Sourcify as part of the broadcast flow:
 
 ```bash
-forge script script/DeploySavingsXDaiReceiverSystem.s.sol --rpc-url "$GNOSIS_RPC_URL" --broadcast
-forge script script/DeployMainnetRouter.s.sol --rpc-url "$MAINNET_RPC_URL" --broadcast
+npm run deploy:gnosis
+npm run deploy:mainnet
 ```
 
 Run a one-off watchtower conversion or start the polling watchtower:
