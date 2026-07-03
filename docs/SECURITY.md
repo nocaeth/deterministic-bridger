@@ -32,6 +32,8 @@ These are the live trust anchors the frontend and watchtower depend on.
 - `op=register` fetches the Ethereum receipt from `MAINNET_RPC_URL`.
 - `op=register` rejects missing, reverted, unrelated, malformed, or stale receipts.
 - `op=register` only accepts `BridgeRequested` logs emitted by the configured router.
+- `op=register` rejects multi-receiver receipts unless the caller provides the
+  intended `logIndex`.
 - `op=register` verifies `factory.predict(deterministicReceiver) == gnosisReceiver`.
 - Pending jobs are deduped by `gnosisReceiver.toLowerCase()`.
 - `WATCHTOWER_MAX_AGE_SECONDS` bounds both receipt age and pending job lifetime.

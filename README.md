@@ -146,8 +146,11 @@ Webhook operations:
 
 `op=register` validates a fresh mined router `BridgeRequested` event before it
 stores work, verifies the Gnosis factory prediction, and dedupes by
-`gnosisReceiver.toLowerCase()`. `op=process` checks pending receiver balances in
-small batches and calls `deployAndConvert` only for funded receivers.
+`gnosisReceiver.toLowerCase()`. If a transaction contains router events for
+multiple `deterministicReceiver` values, registration requires the intended
+`logIndex` and rejects ambiguous tx-hash-only payloads. `op=process` checks
+pending receiver balances in small batches and calls `deployAndConvert` only for
+funded receivers.
 
 See [Tenderly Actions](docs/TENDERLY_ACTIONS.md) for Action deployment/runtime
 details and [Frontend integration](docs/FRONTEND_INTEGRATION.md) for the

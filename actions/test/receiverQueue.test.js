@@ -160,6 +160,62 @@ test("register validates deployed factory prediction and dedupes by Gnosis recei
   }
 });
 
+test("register requires logIndex for receipts with multiple deterministic receivers", { timeout: 60_000 }, async () => {
+  const deterministicReceiverA = Wallet.createRandom().address;
+  const deterministicReceiverB = Wallet.createRandom().address;
+  const payer = Wallet.createRandom().address;
+  const factory = new ethers.Contract(
+    env.SAVINGS_XDAI_RECEIVER_FACTORY,
+    FACTORY_ABI,
+    new JsonRpcProvider(env.GNOSIS_RPC_URL),
+  );
+  const gnosisReceiverA = await factory.predict(deterministicReceiverA);
+  const gnosisReceiverB = await factory.predict(deterministicReceiverB);
+  const rpc = await fakeRpc({
+    receipt: receiptWithLogs([
+      makeBridgeRequestedLog({
+        router: env.ROUTER,
+        payer,
+        deterministicReceiver: deterministicReceiverA,
+        gnosisReceiver: gnosisReceiverA,
+        amount: 1n,
+        logIndex: 7,
+      }),
+      makeBridgeRequestedLog({
+        router: env.ROUTER,
+        payer,
+        deterministicReceiver: deterministicReceiverB,
+        gnosisReceiver: gnosisReceiverB,
+        amount: 2n,
+        logIndex: 8,
+      }),
+    ]),
+  });
+
+  try {
+    await assert.rejects(
+      () =>
+        withActionEnv({ ...env, MAINNET_RPC_URL: rpc.url }, () =>
+          handle(memoryContext(), { payload: { op: "register", mainnetTxHash: TX_HASH } }),
+        ),
+      /multiple deterministicReceivers found; provide logIndex/,
+    );
+
+    const context = memoryContext();
+    await withActionEnv({ ...env, MAINNET_RPC_URL: rpc.url }, () =>
+      handle(context, { payload: { op: "register", mainnetTxHash: TX_HASH, logIndex: 8 } }),
+    );
+
+    const state = await context.storage.getJson(STATE_KEY);
+    assert.equal(state.pending.length, 1);
+    assert.equal(state.pending[0].deterministicReceiver, deterministicReceiverB);
+    assert.equal(state.pending[0].gnosisReceiver, gnosisReceiverB);
+    assert.equal(state.pending[0].logIndex, 8);
+  } finally {
+    await rpc.close();
+  }
+});
+
 test("register rejects an explicit wrong logIndex", { timeout: 60_000 }, async () => {
   const deterministicReceiver = Wallet.createRandom().address;
   const payer = Wallet.createRandom().address;

@@ -64,6 +64,7 @@ async function register(context, payload) {
     const suffix = requestedLogIndex === null ? "" : ` at logIndex=${requestedLogIndex}`;
     throw new Error(`no router BridgeRequested log found in ${mainnetTxHash}${suffix}`);
   }
+  assertUnambiguousDeterministicReceiver(bridgeLogs, requestedLogIndex, mainnetTxHash);
 
   const factory = await factoryContract(context, false);
   const state = await getState(context);
@@ -248,6 +249,26 @@ function bridgeRequestedLogs(receipt, router, requestedLogIndex) {
       throw new Error(`failed to parse BridgeRequested log: ${error.message || error}`);
     }
   });
+}
+
+function assertUnambiguousDeterministicReceiver(bridgeLogs, requestedLogIndex, mainnetTxHash) {
+  if (requestedLogIndex !== null) return;
+
+  const receivers = new Map();
+  for (const { parsed } of bridgeLogs) {
+    const args = parsed.args || [];
+    const deterministicReceiver = normalizeAddress(
+      args.deterministicReceiver || args[1],
+      "deterministicReceiver",
+    );
+    receivers.set(deterministicReceiver.toLowerCase(), deterministicReceiver);
+  }
+
+  if (receivers.size > 1) {
+    throw new Error(
+      `ambiguous BridgeRequested logs in ${mainnetTxHash}: multiple deterministicReceivers found; provide logIndex`,
+    );
+  }
 }
 
 async function validateReceiptAge(provider, receipt, maxAgeSeconds) {

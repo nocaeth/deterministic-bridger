@@ -101,8 +101,11 @@ Register a mined bridge transaction:
 - `logIndex` is optional.
 - When `logIndex` is present, only that exact `BridgeRequested` log is
   registered.
-- When `logIndex` is omitted, every `BridgeRequested(address,address,address,uint256)`
-  log from the transaction is registered.
+- When `logIndex` is omitted, the transaction must contain router
+  `BridgeRequested` logs for only one distinct `deterministicReceiver`.
+- If a transaction contains router `BridgeRequested` logs for multiple
+  `deterministicReceiver` values, `op=register` rejects it as ambiguous and the
+  caller must retry with the intended `logIndex`.
 
 Process the queue:
 
@@ -127,10 +130,11 @@ Inspect storage:
 1. Fetches the Ethereum receipt through `MAINNET_RPC_URL`.
 2. Rejects missing, reverted, unrelated, malformed, or stale receipts.
 3. Requires a `BridgeRequested` log emitted by the configured `ROUTER`.
-4. Reads `payer`, `deterministicReceiver`, `gnosisReceiver`, and `amount` from
+4. Rejects multi-receiver receipts without `logIndex`.
+5. Reads `payer`, `deterministicReceiver`, `gnosisReceiver`, and `amount` from
    the log.
-5. Verifies `factory.predict(deterministicReceiver) == gnosisReceiver`.
-6. Stores or refreshes the job keyed by `gnosisReceiver.toLowerCase()`.
+6. Verifies `factory.predict(deterministicReceiver) == gnosisReceiver`.
+7. Stores or refreshes the job keyed by `gnosisReceiver.toLowerCase()`.
 
 Stored job shape:
 

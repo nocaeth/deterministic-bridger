@@ -85,14 +85,30 @@ durable frontend session store; it only keeps pending conversion jobs.
 6. Track the Ethereum transaction hash locally after submission.
 7. Do not call Tenderly until the receipt is mined and a `BridgeRequested` log
    is present.
-8. Recompute `gnosisReceiver` on reload or page restoration.
-9. Resume `op=process` only while the page/session has active bridges.
+8. If the receipt has more than one router `BridgeRequested` log, select the log
+   matching the local `deterministicReceiver` and pass its `logIndex`.
+9. Recompute `gnosisReceiver` on reload or page restoration.
+10. Resume `op=process` only while the page/session has active bridges.
+
+## Receipt Parsing
+
+After the Ethereum transaction is mined, parse every router
+`BridgeRequested(address,address,address,uint256)` log in the receipt.
+
+- If no router event exists, do not call Tenderly; show a failed bridge state.
+- If exactly one event exists, call `op=register` with that event's `logIndex`.
+- If multiple events exist for one `deterministicReceiver`, use the log matching
+  the local bridge attempt.
+- If multiple events exist for different `deterministicReceiver` values, always
+  pass the exact `logIndex`; the Action rejects ambiguous registrations without
+  it.
+- Verify the event `gnosisReceiver` matches the value shown before signing.
 
 ## Reload Behavior
 
 - If the transaction hash is known, re-read the mined receipt.
-- Re-call `op=register` when needed; the Action dedupes by
-  `gnosisReceiver.toLowerCase()`.
+- Re-call `op=register` with the selected `bridgeLogIndex` when needed; the
+  Action dedupes by `gnosisReceiver.toLowerCase()`.
 - Resume `op=process` pings after restoration.
 - If the receipt is missing, reverted, or does not contain the router event,
   show failure and stop the automation path.
