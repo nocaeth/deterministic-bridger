@@ -2,8 +2,8 @@
 pragma solidity ^0.8.35;
 
 contract MockERC20 {
-    string public name = "Mock DAI";
-    string public symbol = "DAI";
+    string public name = "Mock USDS";
+    string public symbol = "USDS";
     uint8 public decimals = 18;
 
     mapping(address => uint256) public balanceOf;

@@ -4,7 +4,8 @@ Use this as the release runbook for the router, Gnosis receiver system, and Tend
 
 ## Preflight
 
-- Confirm the configured router token and foreign bridge pair are compatible.
+- Confirm hardcoded USDS matches the live Ethereum xDai bridge token.
+- Confirm hardcoded sUSDS has ERC-4626 code on Ethereum.
 - Confirm the live bridge exposes `relayTokens(address,uint256)`.
 - Confirm the Gnosis savings xDAI adapter has code at the expected address.
 - Confirm `router.receiverFor(deterministicReceiver)` matches `factory.predict(deterministicReceiver)`.
@@ -31,12 +32,13 @@ Use this as the release runbook for the router, Gnosis receiver system, and Tend
 
 ## Deploy Mainnet Router
 
-- Run `npm run deploy:mainnet` with `MAINNET_RPC_URL`, `MAINNET_TOKEN`,
+- Run `npm run deploy:mainnet` with `MAINNET_RPC_URL`,
   `SAVINGS_XDAI_RECEIVER_FACTORY`, `GNOSIS_SINGLETON`, and the deployment `PRIVATE_KEY`.
 - Deploy `MainnetStablecoinBridgeRouter` after the Gnosis side is live.
 - The wrapper script broadcasts with `--verify --verifier sourcify`.
 - Verify the router is wired to:
-  - the intended token
+  - hardcoded Ethereum USDS
+  - hardcoded Ethereum sUSDS
   - the canonical Ethereum xDai bridge
   - the deployed Gnosis factory
   - the deployed Gnosis singleton

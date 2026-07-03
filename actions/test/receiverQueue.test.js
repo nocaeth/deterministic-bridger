@@ -18,10 +18,13 @@ const STATE_KEY = "sdai-receiver-watchtower:state";
 const ZERO_BLOOM = `0x${"0".repeat(512)}`;
 const BLOCK_HASH = `0x${"1".repeat(64)}`;
 const TX_HASH = `0x${"2".repeat(64)}`;
+const ETHEREUM_USDS = "0xdC035D45d973E3EC169d2276DDab16f1e407384F";
+const ETHEREUM_SUSDS = "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD";
 
 const ROUTER_ABI = [
   "event BridgeRequested(address indexed payer,address indexed deterministicReceiver,address indexed gnosisReceiver,uint256 amount)",
   "function mainnetToken() view returns (address)",
+  "function savingsUSDS() view returns (address)",
   "function foreignBridge() view returns (address)",
   "function gnosisFactory() view returns (address)",
   "function gnosisSingleton() view returns (address)",
@@ -41,7 +44,8 @@ test("live deployments are wired together", { timeout: 60_000 }, async () => {
   const factory = new ethers.Contract(env.SAVINGS_XDAI_RECEIVER_FACTORY, FACTORY_ABI, gnosis);
   const deterministicReceiver = Wallet.createRandom().address;
 
-  assert.equal(await router.mainnetToken(), env.MAINNET_TOKEN);
+  assert.equal(await router.mainnetToken(), ETHEREUM_USDS);
+  assert.equal(await router.savingsUSDS(), ETHEREUM_SUSDS);
   assert.equal(await router.foreignBridge(), "0x4aa42145Aa6Ebf72e164C9bBC74fbD3788045016");
   assert.equal(await router.gnosisFactory(), env.SAVINGS_XDAI_RECEIVER_FACTORY);
   assert.equal(await router.gnosisSingleton(), env.GNOSIS_SINGLETON);

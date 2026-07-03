@@ -3,7 +3,6 @@ pragma solidity ^0.8.35;
 
 import { Script } from "forge-std/Script.sol";
 import { MainnetStablecoinBridgeRouter } from "../src/MainnetStablecoinBridgeRouter.sol";
-import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { IXDaiBridge } from "../src/interfaces/IXDaiBridge.sol";
 import { ChainConstants } from "../src/libraries/ChainConstants.sol";
 
@@ -12,7 +11,6 @@ contract DeployMainnetRouter is Script {
     /// @notice Deploys `MainnetStablecoinBridgeRouter` from environment configuration.
     /// @return router Deployed mainnet router.
     function run() external returns (MainnetStablecoinBridgeRouter router) {
-        IERC20 mainnetToken = IERC20(vm.envAddress("MAINNET_TOKEN"));
         IXDaiBridge foreignBridge =
             IXDaiBridge(vm.envOr("ETHEREUM_XDAI_BRIDGE", ChainConstants.ETHEREUM_XDAI_BRIDGE));
         address gnosisFactory = vm.envAddress("SAVINGS_XDAI_RECEIVER_FACTORY");
@@ -20,9 +18,7 @@ contract DeployMainnetRouter is Script {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
 
         vm.startBroadcast(privateKey);
-        router = new MainnetStablecoinBridgeRouter(
-            mainnetToken, foreignBridge, gnosisFactory, gnosisSingleton
-        );
+        router = new MainnetStablecoinBridgeRouter(foreignBridge, gnosisFactory, gnosisSingleton);
         vm.stopBroadcast();
     }
 }

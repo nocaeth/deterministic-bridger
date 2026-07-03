@@ -22,9 +22,21 @@ interface IBridgeToken {
     function erc20token() external view returns (address token);
 }
 
+/// @notice Minimal factory interface for cross-chain prediction smoke checks.
+interface IReceiverFactory {
+    /// @notice Predicts the Gnosis receiver for a deterministic receiver.
+    /// @param deterministicReceiver Address used as the CREATE2 salt input.
+    /// @return receiver Deterministic Gnosis receiver.
+    function predict(address deterministicReceiver) external view returns (address receiver);
+}
+
 contract ForkSmokeTest is Test {
-    bytes32 private constant USER_REQUEST_FOR_AFFIRMATION_TOPIC =
+    bytes32 private constant BRIDGE_REQUESTED_TOPIC =
+        keccak256("BridgeRequested(address,address,address,uint256)");
+    bytes32 private constant USER_REQUEST_FOR_AFFIRMATION_TOPIC_LEGACY =
         keccak256("UserRequestForAffirmation(address,uint256)");
+    bytes32 private constant USER_REQUEST_FOR_AFFIRMATION_TOPIC =
+        keccak256("UserRequestForAffirmation(address,uint256,bytes32)");
 
     function testEthereumXDaiBridgeCodeExistsWhenRpcConfigured() external {
         string memory rpc = vm.envOr("MAINNET_RPC_URL", string(""));
@@ -70,7 +82,7 @@ contract ForkSmokeTest is Test {
             return;
         }
 
-        vm.createSelectFork(rpc);
+        uint256 mainnetFork = vm.createSelectFork(rpc);
 
         MainnetStablecoinBridgeRouter router = MainnetStablecoinBridgeRouter(routerAddress);
         address bridgeToken = IBridgeToken(address(router.foreignBridge())).erc20token();
@@ -79,10 +91,24 @@ contract ForkSmokeTest is Test {
             bridgeToken,
             "router token must match ethereum xDai bridge token"
         );
+        assertEq(
+            address(router.savingsUSDS()),
+            ChainConstants.ETHEREUM_SUSDS,
+            "router should expose Ethereum sUSDS"
+        );
+        assertTrue(ChainConstants.ETHEREUM_USDS.code.length != 0, "USDS should have code");
+        assertTrue(ChainConstants.ETHEREUM_SUSDS.code.length != 0, "sUSDS should have code");
 
         address mainnetToken = address(router.mainnetToken());
         address deterministicReceiver = makeAddr("deterministicReceiver");
         address gnosisReceiver = router.receiverFor(deterministicReceiver);
+        assertEq(
+            gnosisReceiver,
+            _predictOnGnosisIfConfigured(router, deterministicReceiver),
+            "router receiver must match Gnosis CREATE2 prediction"
+        );
+        vm.selectFork(mainnetFork);
+
         address payer = makeAddr("payer");
         uint256 amount = 1e18;
 
@@ -97,8 +123,14 @@ contract ForkSmokeTest is Test {
         vm.stopPrank();
 
         assertTrue(
+            _containsRouterBridgeRequestedEvent(
+                entries, routerAddress, payer, deterministicReceiver, gnosisReceiver, amount
+            ),
+            "router should emit BridgeRequested for intended receiver and predicted receiver"
+        );
+        assertTrue(
             _containsBridgeInitiationEvent(entries, gnosisReceiver, amount),
-            "ethereum xDai bridge should emit UserRequestForAffirmation"
+            "ethereum xDai bridge should emit UserRequestForAffirmation for predicted receiver"
         );
     }
 
@@ -134,11 +166,59 @@ contract ForkSmokeTest is Test {
             Vm.Log memory entry = entries[i];
             if (entry.emitter != ChainConstants.ETHEREUM_XDAI_BRIDGE) continue;
             if (entry.topics.length == 0) continue;
-            if (entry.topics[0] != USER_REQUEST_FOR_AFFIRMATION_TOPIC) continue;
-            if (keccak256(entry.data) != keccak256(abi.encode(gnosisReceiver, amount))) continue;
+            if (entry.topics[0] == USER_REQUEST_FOR_AFFIRMATION_TOPIC) {
+                (address receiver, uint256 bridgedAmount,) =
+                    abi.decode(entry.data, (address, uint256, bytes32));
+                if (receiver != gnosisReceiver || bridgedAmount != amount) continue;
+                return true;
+            }
+            if (entry.topics[0] == USER_REQUEST_FOR_AFFIRMATION_TOPIC_LEGACY) {
+                if (keccak256(entry.data) != keccak256(abi.encode(gnosisReceiver, amount))) {
+                    continue;
+                }
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function _containsRouterBridgeRequestedEvent(
+        Vm.Log[] memory entries,
+        address router,
+        address payer,
+        address deterministicReceiver,
+        address gnosisReceiver,
+        uint256 amount
+    ) private pure returns (bool) {
+        for (uint256 i; i < entries.length; i++) {
+            Vm.Log memory entry = entries[i];
+            if (entry.emitter != router) continue;
+            if (entry.topics.length != 4) continue;
+            if (entry.topics[0] != BRIDGE_REQUESTED_TOPIC) continue;
+            if (address(uint160(uint256(entry.topics[1]))) != payer) continue;
+            if (address(uint160(uint256(entry.topics[2]))) != deterministicReceiver) continue;
+            if (address(uint160(uint256(entry.topics[3]))) != gnosisReceiver) continue;
+            if (abi.decode(entry.data, (uint256)) != amount) continue;
             return true;
         }
 
         return false;
+    }
+
+    function _predictOnGnosisIfConfigured(
+        MainnetStablecoinBridgeRouter router,
+        address deterministicReceiver
+    ) private returns (address predicted) {
+        predicted = router.receiverFor(deterministicReceiver);
+
+        string memory gnosisRpc = vm.envOr("GNOSIS_RPC_URL", string(""));
+        if (!_isConfiguredRpc(gnosisRpc)) return predicted;
+
+        address factory = router.gnosisFactory();
+        vm.createSelectFork(gnosisRpc);
+
+        assertTrue(factory.code.length != 0, "Gnosis factory should have code");
+        predicted = IReceiverFactory(factory).predict(deterministicReceiver);
     }
 }

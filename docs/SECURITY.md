@@ -5,7 +5,7 @@ frontend flow in this repository.
 
 ## Deployed Contracts
 
-- Ethereum router: `0xae6bC9700c838828870C2e950fa457308BfEEa40`
+- Ethereum router: `0x634D45eFa4F053DD168648B15aD2A34Ec58852b0`
 - Gnosis receiver singleton: `0x9C9790A9fcd56398a96a415439bEa1be6D6dcF99`
 - Gnosis receiver factory: `0x0D53e8be621d280151B664c62A52EF4194bc5531`
 - Gnosis Savings xDAI adapter: `0xD499b51fcFc66bd31248ef4b28d656d67E591A94`
@@ -15,8 +15,7 @@ These are the live trust anchors the frontend and watchtower depend on.
 
 ## Trust Boundaries
 
-- Users trust the configured Ethereum token and canonical xDai bridge pair to deliver the bridged asset to the
-  predicted Gnosis receiver.
+- Users trust hardcoded Ethereum USDS, hardcoded Ethereum sUSDS, and the canonical xDai bridge pair to deliver the bridged asset to the predicted Gnosis receiver.
 - Users trust the Gnosis factory and singleton embedded in the router; if either address changes, the
   deterministic address path changes.
 - Users trust the Savings xDAI adapter used by the receiver singleton.
@@ -39,6 +38,7 @@ These are the live trust anchors the frontend and watchtower depend on.
 - `WATCHTOWER_MAX_AGE_SECONDS` bounds both receipt age and pending job lifetime.
 - `WATCHTOWER_BATCH_SIZE` bounds conversion attempts per public `op=process` call.
 - `op=process` only calls `deployAndConvert` when the receiver already holds xDAI.
+- The router clears USDS bridge allowance before and after each relay.
 - Tenderly execution is sequential, which reduces storage write races.
 - The contracts have no admin sweep, pause, upgrade, or arbitrary-recipient path.
 - ERC-20 recovery on receiver clones always sends to the bound deterministic receiver.

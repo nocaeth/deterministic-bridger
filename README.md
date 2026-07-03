@@ -1,20 +1,22 @@
 # Deterministic Bridger
 
-Deterministic Bridger routes mainnet DAI through the canonical xDai bridge to a
+Deterministic Bridger routes mainnet USDS through the canonical xDai bridge to a
 counterfactual Gnosis receiver, then converts the bridged xDAI into sDAI for the
-intended deterministic receiver.
+intended deterministic receiver. Users can also submit sUSDS; the router redeems
+it to USDS on Ethereum before bridging.
 
 The core idea is that the mainnet router and Gnosis factory share the same
 `CREATE2` address derivation. A user can know the Gnosis receiver before the
-receiver contract exists, bridge DAI to that address, and let any executor deploy
-and convert the receiver after xDAI arrives.
+receiver contract exists, bridge USDS or redeem-and-bridge sUSDS to that address,
+and let any executor deploy and convert the receiver after xDAI arrives.
 
 ## Current Deployments
 
 | Network | Contract | Address |
 | --- | --- | --- |
-| Ethereum | `MainnetStablecoinBridgeRouter` | `0xae6bC9700c838828870C2e950fa457308BfEEa40` |
-| Ethereum | DAI token bridged by router | `0x6B175474E89094C44Da98b954EedeAC495271d0F` |
+| Ethereum | `MainnetStablecoinBridgeRouter` | `0x634D45eFa4F053DD168648B15aD2A34Ec58852b0` |
+| Ethereum | USDS token bridged by router | `0xdC035D45d973E3EC169d2276DDab16f1e407384F` |
+| Ethereum | sUSDS token accepted by router | `0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD` |
 | Ethereum | Canonical xDai bridge | `0x4aa42145Aa6Ebf72e164C9bBC74fbD3788045016` |
 | Gnosis | `SavingsXDaiReceiver` singleton | `0x9C9790A9fcd56398a96a415439bEa1be6D6dcF99` |
 | Gnosis | `SavingsXDaiReceiverFactory` | `0x0D53e8be621d280151B664c62A52EF4194bc5531` |
@@ -36,7 +38,8 @@ flowchart LR
   adapter[Savings xDAI adapter]
   owner[Deterministic receiver]
 
-  payer -->|approve and bridge DAI| router
+  payer -->|approve USDS or sUSDS| router
+  router -->|redeem sUSDS when needed| router
   router -->|relayTokens to predicted address| bridge
   bridge -->|mints xDAI| receiver
   factory -->|deployAndConvert| receiver
@@ -57,7 +60,7 @@ sequenceDiagram
 
   UI->>Router: receiverFor(deterministicReceiver)
   UI->>User: show predicted Gnosis receiver
-  User->>Router: bridge(amount) or bridgeTo(deterministicReceiver, amount)
+  User->>Router: bridge/bridgeTo USDS or bridgeSavingsUSDS/bridgeSavingsUSDSTo
   Router->>Bridge: relayTokens(gnosisReceiver, amount)
   Router-->>UI: BridgeRequested event
   UI->>Action: register(mainnetTxHash, logIndex)
@@ -98,9 +101,10 @@ Both `MainnetStablecoinBridgeRouter.receiverFor(address)` and
 
 ## Contracts
 
-- `MainnetStablecoinBridgeRouter`: pulls `MAINNET_TOKEN` from `msg.sender`,
-  predicts the deterministic Gnosis receiver from `deterministicReceiver`, and
-  calls `foreignBridge.relayTokens(address,uint256)`.
+- `MainnetStablecoinBridgeRouter`: pulls USDS from `msg.sender`, or pulls sUSDS
+  and redeems it into USDS, predicts the deterministic Gnosis receiver from
+  `deterministicReceiver`, clears bridge allowance around the relay, and calls
+  `foreignBridge.relayTokens(address,uint256)`.
 - `SavingsXDaiReceiver`: Gnosis clone that accepts native xDAI, exposes
   `convertToSavingsXDai()`, and can move accidental ERC-20 balances only to the
   bound deterministic receiver.
@@ -109,10 +113,9 @@ Both `MainnetStablecoinBridgeRouter.receiverFor(address)` and
 - `DeterministicReceiverLib`: shared salt, EIP-1167 creation code, prediction,
   and deployment logic.
 
-The router token and bridge pair are deployment-configured. This repository does
-not hard-code DAI-specific bridge behavior beyond the current deployment values;
-it assumes the configured bridge can relay the configured token with
-`relayTokens(address,uint256)`.
+The router hardcodes Ethereum USDS as the bridge token and Ethereum sUSDS as the
+accepted ERC-4626 vault input. The foreign bridge, Gnosis factory, and Gnosis
+singleton remain deployment-configured.
 
 ## Tenderly Web2 Automation
 
@@ -168,6 +171,9 @@ Primary operational controls:
 - The Tenderly webhook is public by design for browser-only use.
 - `op=register` rejects missing, reverted, unrelated, malformed, or stale
   receipts.
+- `bridgeTo` and `bridgeSavingsUSDSTo` emit the intended
+  `deterministicReceiver` and the predicted `gnosisReceiver`; fork tests verify
+  the canonical bridge event targets that same predicted receiver.
 - `WATCHTOWER_MAX_AGE_SECONDS` bounds receipt age and pending job lifetime.
 - `WATCHTOWER_BATCH_SIZE` bounds public `op=process` work.
 - `WATCHTOWER_PRIVATE_KEY` should be a dedicated low-balance executor key.
@@ -183,11 +189,10 @@ Copy `.env.example` to `.env` and fill in local deployment-specific values:
 ```bash
 MAINNET_RPC_URL=
 GNOSIS_RPC_URL=
-MAINNET_TOKEN=0x...
 SAVINGS_XDAI_ADAPTER=0x...
 GNOSIS_SINGLETON=0x...
 SAVINGS_XDAI_RECEIVER_FACTORY=0x...
-ROUTER=0x...
+ROUTER=0x634D45eFa4F053DD168648B15aD2A34Ec58852b0
 PRIVATE_KEY=
 ```
 

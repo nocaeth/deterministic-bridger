@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Deterministic Bridger routes a deployment-configured mainnet stablecoin from a payer to a counterfactual Gnosis receiver derived from the intended `deterministicReceiver`. After the canonical bridge mints native xDAI to that address, any executor can deploy the receiver clone and convert the full xDAI balance into sDAI for the same `deterministicReceiver`.
+Deterministic Bridger routes hardcoded Ethereum USDS from a payer to a counterfactual Gnosis receiver derived from the intended `deterministicReceiver`. Users may also submit hardcoded Ethereum sUSDS; the router redeems it into USDS before using the canonical bridge. After the bridge mints native xDAI to that address, any executor can deploy the receiver clone and convert the full xDAI balance into sDAI for the same `deterministicReceiver`.
 
 The design goal is deterministic payout without requiring the receiver contract to exist at bridge time.
 
@@ -10,8 +10,9 @@ The design goal is deterministic payout without requiring the receiver contract 
 
 | Network | Contract | Address |
 | --- | --- | --- |
-| Ethereum | `MainnetStablecoinBridgeRouter` | `0xae6bC9700c838828870C2e950fa457308BfEEa40` |
-| Ethereum | DAI token bridged by router | `0x6B175474E89094C44Da98b954EedeAC495271d0F` |
+| Ethereum | `MainnetStablecoinBridgeRouter` | `0x634D45eFa4F053DD168648B15aD2A34Ec58852b0` |
+| Ethereum | USDS token bridged by router | `0xdC035D45d973E3EC169d2276DDab16f1e407384F` |
+| Ethereum | sUSDS token accepted by router | `0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD` |
 | Ethereum | Canonical xDai bridge | `0x4aa42145Aa6Ebf72e164C9bBC74fbD3788045016` |
 | Gnosis | `SavingsXDaiReceiver` singleton | `0x9C9790A9fcd56398a96a415439bEa1be6D6dcF99` |
 | Gnosis | `SavingsXDaiReceiverFactory` | `0x0D53e8be621d280151B664c62A52EF4194bc5531` |
@@ -24,19 +25,54 @@ These deployments are the reference configuration for the architecture and the f
 ```mermaid
 flowchart LR
   payer[Mainnet payer]
+  intended[Intended receiver / deterministicReceiver]
   router[MainnetStablecoinBridgeRouter]
   bridge[Ethereum xDai bridge]
   receiver[Counterfactual gnosisReceiver]
   factory[SavingsXDaiReceiverFactory]
   adapter[Savings xDAI adapter]
-  owner[deterministicReceiver]
 
-  payer -->|approve and bridge stablecoin| router
+  intended -->|salt input| router
+  intended -->|salt input| factory
+  payer -->|approve USDS or sUSDS| router
+  router -->|redeem sUSDS when needed| router
+  router -->|BridgeRequested includes intended + gnosisReceiver| bridge
   router -->|relayTokens(gnosisReceiver, amount)| bridge
   bridge -->|mints xDAI| receiver
-  factory -->|deployAndConvert(deterministicReceiver)| receiver
+  factory -->|deployAndConvert(intended)| receiver
   receiver -->|depositXDAI(deterministicReceiver)| adapter
-  adapter -->|sDAI shares| owner
+  adapter -->|sDAI shares| intended
+```
+
+## Intended Receiver Path
+
+The intended receiver is never inferred from the payer. For `bridgeTo` and
+`bridgeSavingsUSDSTo`, the supplied `deterministicReceiver` is the salt input
+that determines the Gnosis receiver and the eventual sDAI recipient.
+
+```mermaid
+flowchart TD
+  payer[Mainnet payer]
+  intended[Intended receiver / deterministicReceiver]
+  salt["salt = keccak256(abi.encode(intended))"]
+  router[Mainnet router]
+  factory[Gnosis factory]
+  gnosisReceiver[Predicted gnosisReceiver]
+  bridgeEvent["Ethereum bridge event: UserRequestForAffirmation(gnosisReceiver, amount, messageId)"]
+  routerEvent["Router event: BridgeRequested(payer, intended, gnosisReceiver, amount)"]
+  clone["Gnosis receiver clone deployed with same salt"]
+
+  payer -->|funds transaction| router
+  intended --> salt
+  salt --> router
+  salt --> factory
+  router --> gnosisReceiver
+  factory --> gnosisReceiver
+  router --> routerEvent
+  router --> bridgeEvent
+  bridgeEvent -->|Gnosis bridge mints xDAI| gnosisReceiver
+  factory --> clone
+  clone -->|address equals| gnosisReceiver
 ```
 
 ```mermaid
@@ -52,7 +88,7 @@ sequenceDiagram
 
   UI->>Router: receiverFor(deterministicReceiver)
   UI->>User: show predicted gnosisReceiver
-  User->>Router: bridge(amount) or bridgeTo(deterministicReceiver, amount)
+  User->>Router: bridge/bridgeTo USDS or bridgeSavingsUSDS/bridgeSavingsUSDSTo
   Router->>Bridge: relayTokens(gnosisReceiver, amount)
   Router-->>UI: BridgeRequested event
   UI->>Action: register(mainnetTxHash, logIndex)
@@ -66,7 +102,7 @@ sequenceDiagram
 
 ## Components
 
-- `MainnetStablecoinBridgeRouter` runs on Ethereum. It spends `msg.sender` allowance for the configured `mainnetToken`, derives the expected `gnosisReceiver`, approves the configured `foreignBridge`, and calls `relayTokens(address,uint256)`.
+- `MainnetStablecoinBridgeRouter` runs on Ethereum. It spends `msg.sender` allowance for hardcoded USDS, or spends hardcoded sUSDS and redeems it into USDS, derives the expected `gnosisReceiver`, approves the configured `foreignBridge`, and calls `relayTokens(address,uint256)`.
 - `SavingsXDaiReceiverFactory` runs on Gnosis. It deploys EIP-1167 clones with `CREATE2`, emits both the deployed `gnosisReceiver` and bound `deterministicReceiver`, and can immediately convert the receiver balance after setup.
 - `SavingsXDaiReceiver` is the singleton implementation behind every clone. Each clone stores exactly one `deterministicReceiver`, accepts native xDAI, deposits its full xDAI balance through `ISavingsXDaiAdapter.depositXDAI(deterministicReceiver)`, and can move accidental ERC-20 balances only to the same `deterministicReceiver`.
 - `DeterministicReceiverLib` owns salt derivation, minimal proxy creation code, prediction, and deployment so the router and factory share one address-derivation path.
@@ -79,6 +115,7 @@ The mainnet payer is the account whose token allowance and balance are spent by 
 
 - `bridge(amount)` uses `msg.sender` as both payer and `deterministicReceiver`.
 - `bridgeTo(deterministicReceiver, amount)` still spends `msg.sender` allowance, but derives the receiver from the supplied `deterministicReceiver`.
+- `bridgeSavingsUSDS(shares)` and `bridgeSavingsUSDSTo(deterministicReceiver, shares)` follow the same receiver rules, but spend sUSDS shares and emit `BridgeRequested` with the redeemed USDS amount.
 
 This separation lets one payer fund a receiver address without changing the deterministic address derivation.
 
@@ -112,7 +149,8 @@ Both `MainnetStablecoinBridgeRouter.receiverFor(address)` and `SavingsXDaiReceiv
 
 - `deterministicReceiver` is the only input that decides the eventual payout identity.
 - `gnosisReceiver` is always the CREATE2 address for the configured factory, singleton, and salt.
-- The router never mints, holds, or wraps assets on Ethereum. It only approves and forwards the bridged token.
+- The router does not custody assets beyond a single transaction. It either forwards caller USDS or redeems caller sUSDS into USDS, then approves and forwards the USDS to the bridge.
+- The router clears bridge allowance before and after each relay so successful calls do not leave residual USDS approval on the router.
 - The receiver clone never pays out to an arbitrary address. xDAI and accidental ERC-20 balances are always forwarded to the bound `deterministicReceiver`.
 - Conversion is retriable. If adapter deposit fails, xDAI stays in the receiver for a later attempt.
 - There is no admin sweep, pause, upgrade, or rescue path in the MVP.
@@ -128,7 +166,7 @@ Both `MainnetStablecoinBridgeRouter.receiverFor(address)` and `SavingsXDaiReceiv
 
 ## Trust Boundaries
 
-- Users trust the configured mainnet token and foreign bridge pair to be compatible.
+- Users trust hardcoded Ethereum USDS, hardcoded Ethereum sUSDS, and the configured foreign bridge pair to be compatible.
 - Users trust the configured foreign bridge to pull the token and bridge the intended amount.
 - Users trust the Gnosis factory and singleton addresses embedded in the router deployment.
 - Users trust the configured Savings xDAI adapter in the singleton deployment.

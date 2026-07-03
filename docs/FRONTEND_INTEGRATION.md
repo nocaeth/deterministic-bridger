@@ -11,8 +11,9 @@ Tenderly webhook URL:
 
 | Key | Network | Purpose |
 | --- | --- | --- |
-| `ROUTER` | Ethereum | `MainnetStablecoinBridgeRouter` used for `receiverFor`, `bridge`, and `bridgeTo`. |
-| `MAINNET_TOKEN` | Ethereum | Token the user approves and bridges through the router. |
+| `ROUTER` | Ethereum | `MainnetStablecoinBridgeRouter` used for prediction and USDS/sUSDS bridge calls. |
+| `USDS` | Ethereum | Hardcoded router bridge token. Approve this for `bridge` and `bridgeTo`. |
+| `sUSDS` | Ethereum | Hardcoded ERC-4626 vault input. Approve this for `bridgeSavingsUSDS` and `bridgeSavingsUSDSTo`. |
 | `SAVINGS_XDAI_RECEIVER_FACTORY` | Gnosis | Factory used for manual fallback and independent prediction checks. |
 | `GNOSIS_SINGLETON` | Gnosis | Singleton used by TypeScript `CREATE2` prediction if not reading `receiverFor`. |
 | `TENDERLY_DETERMINISTIC_BRIDGER_WEBHOOK_URL` | Web | Public Tenderly Action webhook. |
@@ -38,7 +39,7 @@ sequenceDiagram
   U->>UI: choose deterministicReceiver
   UI->>R: receiverFor(deterministicReceiver)
   UI->>U: show gnosisReceiver and fallback call
-  U->>R: bridge(amount) or bridgeTo(deterministicReceiver, amount)
+  U->>R: bridge/bridgeTo USDS or bridgeSavingsUSDS/bridgeSavingsUSDSTo
   UI->>M: fetch mined receipt
   UI->>T: op=register(mainnetTxHash, logIndex)
   loop while page/session is open
@@ -60,6 +61,8 @@ type ActiveBridge = {
   deterministicReceiver: `0x${string}`;
   gnosisReceiver: `0x${string}`;
   amount: bigint;
+  inputToken: "USDS" | "sUSDS";
+  inputAmount: bigint;
   mainnetTxHash?: `0x${string}`;
   bridgeLogIndex?: number;
   sawPositiveGnosisBalance: boolean;
@@ -79,17 +82,23 @@ durable frontend session store; it only keeps pending conversion jobs.
    `CREATE2` implementation.
 3. Show the manual fallback call:
    `factory.deployAndConvert(deterministicReceiver)`.
-4. Call `router.bridge(amount)` when payer and receiver are the same.
-5. Call `router.bridgeTo(deterministicReceiver, amount)` when funds are sent to
-   another deterministic receiver.
-6. Track the Ethereum transaction hash locally after submission.
-7. Do not call Tenderly until the receipt is mined and a `BridgeRequested` log
+4. For USDS, call `router.bridge(amount)` when payer and receiver are the same.
+5. For USDS sent to another receiver, call
+   `router.bridgeTo(deterministicReceiver, amount)`.
+6. For sUSDS, call `router.bridgeSavingsUSDS(shares)` when payer and receiver
+   are the same.
+7. For sUSDS sent to another receiver, call
+   `router.bridgeSavingsUSDSTo(deterministicReceiver, shares)`.
+8. Treat the `BridgeRequested` event amount as the actual USDS amount bridged;
+   for sUSDS inputs this can differ from the share amount submitted.
+9. Track the Ethereum transaction hash locally after submission.
+10. Do not call Tenderly until the receipt is mined and a `BridgeRequested` log
    is present.
-8. If the receipt has more than one router `BridgeRequested` log, the frontend
+11. If the receipt has more than one router `BridgeRequested` log, the frontend
    may call `op=register` once without `logIndex`; the Action validates and
    tracks every router event separately.
-9. Recompute `gnosisReceiver` on reload or page restoration.
-10. Resume `op=process` only while the page/session has active bridges.
+12. Recompute `gnosisReceiver` on reload or page restoration.
+13. Resume `op=process` only while the page/session has active bridges.
 
 ## Receipt Parsing
 
