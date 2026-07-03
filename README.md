@@ -227,7 +227,7 @@ Run a one-off watchtower conversion or start the polling watchtower:
 
 ```bash
 DETERMINISTIC_RECEIVER=0x... forge script script/WatchtowerDeployAndConvert.s.sol --rpc-url "$GNOSIS_RPC_URL" --broadcast
-ROUTER=0x... SAVINGS_XDAI_RECEIVER_FACTORY=0x... PRIVATE_KEY=0x... node script/watchtower.mjs
+ROUTER=0x634D45eFa4F053DD168648B15aD2A34Ec58852b0 SAVINGS_XDAI_RECEIVER_FACTORY=0x... PRIVATE_KEY=0x... node script/watchtower.mjs
 ```
 
 ## Documentation

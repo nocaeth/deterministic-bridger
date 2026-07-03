@@ -180,7 +180,7 @@ Set these Tenderly Action secrets:
 MAINNET_RPC_URL=<Ethereum RPC URL used to read mined receipts>
 TENDERLY_GNOSIS_RPC_URL=<Tenderly Virtual Environment, fork, or Gnosis RPC URL>
 GNOSIS_RPC_URL=<fallback Gnosis RPC URL when TENDERLY_GNOSIS_RPC_URL is unset>
-ROUTER=<MainnetStablecoinBridgeRouter on Ethereum>
+ROUTER=0x634D45eFa4F053DD168648B15aD2A34Ec58852b0
 SAVINGS_XDAI_RECEIVER_FACTORY=<SavingsXDaiReceiverFactory on Gnosis>
 WATCHTOWER_PRIVATE_KEY=<funded executor private key>
 WATCHTOWER_BATCH_SIZE=25
