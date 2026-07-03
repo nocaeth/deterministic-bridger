@@ -160,7 +160,7 @@ test("register validates deployed factory prediction and dedupes by Gnosis recei
   }
 });
 
-test("register requires logIndex for receipts with multiple deterministic receivers", { timeout: 60_000 }, async () => {
+test("register indexes and tracks every router event in a multi-receiver receipt", { timeout: 60_000 }, async () => {
   const deterministicReceiverA = Wallet.createRandom().address;
   const deterministicReceiverB = Wallet.createRandom().address;
   const payer = Wallet.createRandom().address;
@@ -193,24 +193,25 @@ test("register requires logIndex for receipts with multiple deterministic receiv
   });
 
   try {
-    await assert.rejects(
-      () =>
-        withActionEnv({ ...env, MAINNET_RPC_URL: rpc.url }, () =>
-          handle(memoryContext(), { payload: { op: "register", mainnetTxHash: TX_HASH } }),
-        ),
-      /multiple deterministicReceivers found; provide logIndex/,
-    );
-
     const context = memoryContext();
     await withActionEnv({ ...env, MAINNET_RPC_URL: rpc.url }, () =>
-      handle(context, { payload: { op: "register", mainnetTxHash: TX_HASH, logIndex: 8 } }),
+      handle(context, { payload: { op: "register", mainnetTxHash: TX_HASH } }),
     );
 
     const state = await context.storage.getJson(STATE_KEY);
-    assert.equal(state.pending.length, 1);
-    assert.equal(state.pending[0].deterministicReceiver, deterministicReceiverB);
-    assert.equal(state.pending[0].gnosisReceiver, gnosisReceiverB);
-    assert.equal(state.pending[0].logIndex, 8);
+    assert.equal(state.pending.length, 2);
+    assert.deepEqual(
+      state.pending.map((job) => job.deterministicReceiver),
+      [deterministicReceiverA, deterministicReceiverB],
+    );
+    assert.deepEqual(
+      state.pending.map((job) => job.gnosisReceiver),
+      [gnosisReceiverA, gnosisReceiverB],
+    );
+    assert.deepEqual(
+      state.pending.map((job) => job.logIndex),
+      [7, 8],
+    );
   } finally {
     await rpc.close();
   }
