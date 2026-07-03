@@ -57,7 +57,7 @@ sequenceDiagram
 
   UI->>Router: receiverFor(deterministicReceiver)
   UI->>User: show predicted Gnosis receiver
-  User->>Router: bridge(amount) or bridgeTo(receiver, amount)
+  User->>Router: bridge(amount) or bridgeTo(deterministicReceiver, amount)
   Router->>Bridge: relayTokens(gnosisReceiver, amount)
   Router-->>UI: BridgeRequested event
   UI->>Action: register(mainnetTxHash, logIndex)
@@ -149,6 +149,10 @@ stores work, verifies the Gnosis factory prediction, and dedupes by
 `gnosisReceiver.toLowerCase()`. `op=process` checks pending receiver balances in
 small batches and calls `deployAndConvert` only for funded receivers.
 
+See [Tenderly Actions](docs/TENDERLY_ACTIONS.md) for Action deployment/runtime
+details and [Frontend integration](docs/FRONTEND_INTEGRATION.md) for the
+browser-side flow, status model, polling, reload recovery, and manual fallback.
+
 ## Security Model
 
 The watchtower is not trusted with user funds. It can only execute public
@@ -219,6 +223,7 @@ ROUTER=0x... SAVINGS_XDAI_RECEIVER_FACTORY=0x... PRIVATE_KEY=0x... node script/w
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Frontend integration](docs/FRONTEND_INTEGRATION.md)
 - [Deployment checklist](docs/DEPLOYMENT_CHECKLIST.md)
 - [Tenderly Actions](docs/TENDERLY_ACTIONS.md)
 - [Security review](docs/SECURITY.md)
