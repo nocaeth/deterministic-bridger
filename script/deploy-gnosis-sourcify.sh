@@ -3,6 +3,7 @@ set -euo pipefail
 
 : "${GNOSIS_RPC_URL:?Set GNOSIS_RPC_URL}"
 : "${SAVINGS_XDAI_ADAPTER:?Set SAVINGS_XDAI_ADAPTER}"
+: "${PRIVATE_KEY:?Set PRIVATE_KEY}"
 
 forge script script/DeploySavingsXDaiReceiverSystem.s.sol:DeploySavingsXDaiReceiverSystem \
   --rpc-url "$GNOSIS_RPC_URL" \

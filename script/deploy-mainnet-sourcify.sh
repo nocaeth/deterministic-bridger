@@ -5,6 +5,7 @@ set -euo pipefail
 : "${MAINNET_TOKEN:?Set MAINNET_TOKEN}"
 : "${SAVINGS_XDAI_RECEIVER_FACTORY:?Set SAVINGS_XDAI_RECEIVER_FACTORY}"
 : "${GNOSIS_SINGLETON:?Set GNOSIS_SINGLETON}"
+: "${PRIVATE_KEY:?Set PRIVATE_KEY}"
 
 forge script script/DeployMainnetRouter.s.sol:DeployMainnetRouter \
   --rpc-url "$MAINNET_RPC_URL" \

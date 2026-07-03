@@ -13,8 +13,9 @@ contract WatchtowerDeployAndConvert is Script {
         SavingsXDaiReceiverFactory factory =
             SavingsXDaiReceiverFactory(vm.envAddress("SAVINGS_XDAI_RECEIVER_FACTORY"));
         address deterministicReceiver = vm.envAddress("DETERMINISTIC_RECEIVER");
+        uint256 privateKey = vm.envUint("PRIVATE_KEY");
 
-        vm.startBroadcast();
+        vm.startBroadcast(privateKey);
         (receiver, shares) = factory.deployAndConvert(deterministicReceiver);
         vm.stopBroadcast();
     }

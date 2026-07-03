@@ -17,8 +17,9 @@ contract DeployMainnetRouter is Script {
             IXDaiBridge(vm.envOr("ETHEREUM_XDAI_BRIDGE", ChainConstants.ETHEREUM_XDAI_BRIDGE));
         address gnosisFactory = vm.envAddress("SAVINGS_XDAI_RECEIVER_FACTORY");
         address gnosisSingleton = vm.envAddress("GNOSIS_SINGLETON");
+        uint256 privateKey = vm.envUint("PRIVATE_KEY");
 
-        vm.startBroadcast();
+        vm.startBroadcast(privateKey);
         router = new MainnetStablecoinBridgeRouter(
             mainnetToken, foreignBridge, gnosisFactory, gnosisSingleton
         );

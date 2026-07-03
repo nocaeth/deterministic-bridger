@@ -16,8 +16,9 @@ contract DeploySavingsXDaiReceiverSystem is Script {
         returns (SavingsXDaiReceiver singleton, SavingsXDaiReceiverFactory factory)
     {
         ISavingsXDaiAdapter adapter = ISavingsXDaiAdapter(vm.envAddress("SAVINGS_XDAI_ADAPTER"));
+        uint256 privateKey = vm.envUint("PRIVATE_KEY");
 
-        vm.startBroadcast();
+        vm.startBroadcast(privateKey);
         singleton = new SavingsXDaiReceiver(adapter);
         factory = new SavingsXDaiReceiverFactory(address(singleton));
         vm.stopBroadcast();
