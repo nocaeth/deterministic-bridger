@@ -45,8 +45,10 @@ These are the live trust anchors the frontend and watchtower depend on.
 
 ## Secret Handling
 
-- Keep `MAINNET_RPC_URL`, `GNOSIS_RPC_URL` or `TENDERLY_GNOSIS_RPC_URL`, `ROUTER`,
+- Keep `MAINNET_RPC_URL`, `GNOSIS_RPC_URL` or `TENDERLY_GNOSIS_RPC_URL`,
   `SAVINGS_XDAI_RECEIVER_FACTORY`, and `WATCHTOWER_PRIVATE_KEY` in Tenderly Action secrets.
+- The router address is hardcoded in the Action bundle so a stale Tenderly
+  `ROUTER` secret cannot cause validation against an old router.
 - Keep deployment-only `PRIVATE_KEY` separate from `WATCHTOWER_PRIVATE_KEY`.
 - Do not ship Tenderly API keys, private keys, or authenticated RPC URLs to frontend code.
 - Keep the executor wallet funded with only the xDAI needed for operations; it is not a custody key.

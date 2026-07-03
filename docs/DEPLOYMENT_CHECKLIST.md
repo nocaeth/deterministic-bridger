@@ -49,12 +49,12 @@ Use this as the release runbook for the router, Gnosis receiver system, and Tend
 - Deploy the single Tenderly Action `Deterministic-Bridger` from `tenderly.yaml`.
 - Configure secrets:
   - `MAINNET_RPC_URL`
-  - `ROUTER`
   - `SAVINGS_XDAI_RECEIVER_FACTORY`
   - `TENDERLY_GNOSIS_RPC_URL` or `GNOSIS_RPC_URL`
   - `WATCHTOWER_PRIVATE_KEY`
   - `WATCHTOWER_BATCH_SIZE`
   - `WATCHTOWER_MAX_AGE_SECONDS`
+- Confirm the Action code hardcoded router matches the deployed router address before deploy.
 - Keep `WATCHTOWER_PRIVATE_KEY` separate from deployment keys and fund it with only limited xDAI.
 - Configure the frontend with the public webhook URL only. Do not ship Tenderly API keys or secrets to the browser.
 

@@ -7,6 +7,7 @@ const isAddress = ethers.isAddress || ethers.utils.isAddress;
 const getAddress = ethers.getAddress || ethers.utils.getAddress;
 
 const STATE_KEY = "sdai-receiver-watchtower:state";
+const ROUTER = "0x634D45eFa4F053DD168648B15aD2A34Ec58852b0";
 const DEFAULT_BATCH_SIZE = 25;
 const DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
@@ -43,7 +44,7 @@ async function register(context, payload) {
   const mainnetTxHash = normalizeTxHash(payload.mainnetTxHash);
   const requestedLogIndex = parseOptionalLogIndex(payload.logIndex);
   const mainnetRpcUrl = await requiredSecret(context, "MAINNET_RPC_URL");
-  const router = normalizeAddress(await requiredSecret(context, "ROUTER"), "ROUTER");
+  const router = normalizeAddress(ROUTER, "ROUTER");
   const maxAgeSeconds = positiveInteger(
     await optionalSecret(context, "WATCHTOWER_MAX_AGE_SECONDS"),
     DEFAULT_MAX_AGE_SECONDS,
