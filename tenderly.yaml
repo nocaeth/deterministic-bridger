@@ -1,0 +1,14 @@
+account_id: "a9ae5799-ef37-4c1d-ae58-ac98d7a81805"
+actions:
+  gnosisdao/treasury:
+    runtime: v2
+    sources: actions
+    specs:
+      Deterministic-Bridger:
+        description: Validate mainnet bridge receipts and process pending deterministic Gnosis receivers when pinged.
+        function: receiverQueue:handle
+        execution_type: sequential
+        trigger:
+          type: webhook
+          webhook:
+            authenticated: false

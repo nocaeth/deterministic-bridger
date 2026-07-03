@@ -1,0 +1,15 @@
+out/
+cache/
+broadcast/
+.env
+.env.*
+!.env.example
+node_modules/
+.bun/
+.tmp/
+coverage/
+lcov.info
+*.pem
+*.key
+*.p12
+*.pfx

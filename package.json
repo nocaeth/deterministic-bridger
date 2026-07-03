@@ -1,0 +1,12 @@
+{
+  "name": "sdai-deterministic-bridging-actions",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "check:actions": "node --check actions/receiverQueue.js",
+    "test:actions": "node --test actions/test/*.test.js"
+  },
+  "dependencies": {
+    "ethers": "^6.13.5"
+  }
+}
