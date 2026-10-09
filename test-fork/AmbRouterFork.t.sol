@@ -10,14 +10,15 @@ import { IHomeXDaiBridge } from "../src/interfaces/IHomeXDaiBridge.sol";
 import { IAMB, IAMBClaimReceiver } from "../src/interfaces/IAMB.sol";
 import { ISavingsXDaiAdapter } from "../src/interfaces/ISavingsXDaiAdapter.sol";
 import { ChainConstants } from "../src/libraries/ChainConstants.sol";
-import { VaultClaimLib } from "../src/libraries/VaultClaimLib.sol";
-import { SavingsXDaiSettlementVault as Vault } from "../src/SavingsXDaiSettlementVault.sol";
+import { BridgeClaimLib } from "../src/libraries/BridgeClaimLib.sol";
+import { GnosisAmbSettlementRouter as Vault } from "../src/GnosisAmbSettlementRouter.sol";
 import { MockAMB } from "../test/mocks/MockAMB.sol";
-import { DeployAmbVault } from "../script/DeployAmbVault.s.sol";
+import { DeployAmbGnosisRouter } from "../script/DeployAmbGnosisRouter.s.sol";
 import { DeployAmbRouter } from "../script/DeployAmbRouter.s.sol";
 import { MainnetAmbBridgeRouter } from "../src/MainnetAmbBridgeRouter.sol";
+import { EthereumBridgeReturnReceiver } from "../src/EthereumBridgeReturnReceiver.sol";
 
-contract AmbVaultForkTest is Test {
+contract AmbRouterForkTest is Test {
     address internal constant FOREIGN_AMB = 0x4C36d2919e407f0Cc2Ee3c993ccF8ac26d9CE64e;
     address internal constant HOME_AMB = 0x75Df5AF045d91108662D8080fD1FEFAd6aA0bb59;
     address internal constant ADAPTER = 0xD499b51fcFc66bd31248ef4b28d656d67E591A94;
@@ -26,11 +27,8 @@ contract AmbVaultForkTest is Test {
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), 26_154_748);
         assertEq(block.chainid, 1);
         INonceXDaiBridge bridge = INonceXDaiBridge(ChainConstants.ETHEREUM_XDAI_BRIDGE);
-        assertEq(
-            bridge.implementation().codehash,
-            0x264cadfbd942c81527ab9bd8494c60509fb89f95cd8dd1ebc0fec72fd64809cb
-        );
         assertEq(bridge.erc20token(), ChainConstants.ETHEREUM_USDS);
+        assertGt(bridge.implementation().code.length, 0);
         assertEq(IERC4626(ChainConstants.ETHEREUM_SUSDS).asset(), ChainConstants.ETHEREUM_USDS);
         assertEq(IAMB(FOREIGN_AMB).sourceChainId(), 1);
         assertEq(IAMB(FOREIGN_AMB).destinationChainId(), 100);
@@ -65,10 +63,6 @@ contract AmbVaultForkTest is Test {
         vm.createSelectFork(vm.envString("GNOSIS_RPC_URL"), 48_668_463);
         assertEq(block.chainid, 100);
         IHomeXDaiBridge home = IHomeXDaiBridge(ChainConstants.GNOSIS_XDAI_BRIDGE);
-        assertEq(
-            home.implementation().codehash,
-            0xfa047c93c784231e57196bf818ec20b303dd1e9a65e4452507361858f7784ab5
-        );
         assertEq(home.feeManagerContract(), address(0));
         assertEq(home.decimalShift(), 0);
         bytes32 hash = keccak256(
@@ -110,7 +104,7 @@ contract AmbVaultForkTest is Test {
             ChainConstants.ETHEREUM_XDAI_BRIDGE
         );
         vm.deal(address(vault), 20 ether);
-        VaultClaimLib.Claim memory c = VaultClaimLib.Claim(
+        BridgeClaimLib.Claim memory c = BridgeClaimLib.Claim(
             bytes32(uint256(9000)), address(this), address(0xA11CE), 5 ether, 1
         );
         bytes32 transferHash = keccak256(abi.encodePacked(address(vault), c.amount, c.bridgeNonce));
@@ -157,32 +151,46 @@ contract AmbVaultForkTest is Test {
         emit log_named_uint("failed_minimum_callback_with_mock_AMB_gas", beforeGas - gasleft());
     }
 
-    function testPairedDeploymentScriptsDryRunAndRejectChangedNonce() external {
+    function testMirroredRecoveryAndSimulationScriptsRejectChangedNonce() external {
         uint256 mainnet = vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), 26_154_748);
-        uint256 key = 0x123456;
-        address deployer = vm.addr(key);
-        uint256 nonce = vm.getNonce(deployer);
-        address expected = vm.computeCreateAddress(deployer, nonce);
-        vm.setEnv("PRIVATE_KEY", vm.toString(key));
-        vm.setEnv("EXPECTED_MAINNET_DEPLOYER_NONCE", vm.toString(nonce));
-        vm.setEnv("EXPECTED_MAINNET_AMB_ROUTER", vm.toString(expected));
+        uint256 routerKey = 0x123456;
+        uint256 vaultKey = 0xA11CEB0B20261009;
+        address routerDeployer = vm.addr(routerKey);
+        address vaultDeployer = vm.addr(vaultKey);
+        uint256 routerNonce = vm.getNonce(routerDeployer);
+        uint256 vaultNonce = vm.getNonce(vaultDeployer);
+        address expectedRouter = vm.computeCreateAddress(routerDeployer, routerNonce);
+        address expectedVault = vm.computeCreateAddress(vaultDeployer, vaultNonce);
+        vm.startPrank(vaultDeployer);
+        EthereumBridgeReturnReceiver receiver = new EthereumBridgeReturnReceiver(routerDeployer);
+        vm.stopPrank();
+        assertEq(address(receiver), expectedVault);
+        vm.setEnv("EXPECTED_MAINNET_DEPLOYER_NONCE", vm.toString(routerNonce));
+        vm.setEnv("EXPECTED_MAINNET_AMB_ROUTER", vm.toString(expectedRouter));
+        vm.setEnv("MAINNET_PAUSE_AUTHORITY", vm.toString(routerDeployer));
         vm.setEnv("GNOSIS_AMB", vm.toString(HOME_AMB));
         vm.setEnv("ETHEREUM_AMB", vm.toString(FOREIGN_AMB));
         vm.setEnv("SAVINGS_XDAI_ADAPTER", vm.toString(ADAPTER));
         vm.setEnv("HOME_XDAI_BRIDGE", vm.toString(ChainConstants.GNOSIS_XDAI_BRIDGE));
         vm.setEnv("ETHEREUM_XDAI_BRIDGE", vm.toString(ChainConstants.ETHEREUM_XDAI_BRIDGE));
         vm.createSelectFork(vm.envString("GNOSIS_RPC_URL"), 48_668_463);
-        Vault vault = (new DeployAmbVault()).run();
-        assertEq(vault.sourceRouter(), expected);
-        vm.setEnv("AMB_VAULT", vm.toString(address(vault)));
+        assertEq(vm.getNonce(vaultDeployer), vaultNonce);
+        vm.setEnv("PRIVATE_KEY", vm.toString(vaultKey));
+        Vault vault = (new DeployAmbGnosisRouter()).run();
+        assertEq(address(vault), expectedVault);
+        assertEq(vault.sourceRouter(), expectedRouter);
+        vm.setEnv("AMB_GNOSIS_ROUTER", vm.toString(address(vault)));
         vm.selectFork(mainnet);
+        vm.setEnv("PRIVATE_KEY", vm.toString(routerKey));
         DeployAmbRouter script = new DeployAmbRouter();
-        vm.setEnv("EXPECTED_MAINNET_DEPLOYER_NONCE", vm.toString(nonce + 1));
+        vm.setEnv("EXPECTED_MAINNET_DEPLOYER_NONCE", vm.toString(routerNonce + 1));
         vm.expectRevert("DEPLOYER_NONCE_CHANGED");
         script.run();
-        vm.setEnv("EXPECTED_MAINNET_DEPLOYER_NONCE", vm.toString(nonce));
+        vm.setEnv("EXPECTED_MAINNET_DEPLOYER_NONCE", vm.toString(routerNonce));
         MainnetAmbBridgeRouter router = script.run();
-        assertEq(address(router), expected);
-        assertEq(router.gnosisVault(), address(vault));
+        assertEq(address(router), expectedRouter);
+        assertEq(router.gnosisRouter(), address(vault));
+        assertEq(router.pauseAuthority(), routerDeployer);
+        assertEq(receiver.recoveryAuthority(), routerDeployer);
     }
 }

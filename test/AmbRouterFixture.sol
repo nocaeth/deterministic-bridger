@@ -3,14 +3,14 @@ pragma solidity ^0.8.35;
 
 import { Test } from "forge-std/Test.sol";
 import { MainnetAmbBridgeRouter } from "../src/MainnetAmbBridgeRouter.sol";
-import { SavingsXDaiSettlementVault } from "../src/SavingsXDaiSettlementVault.sol";
+import { GnosisAmbSettlementRouter } from "../src/GnosisAmbSettlementRouter.sol";
 import { IAMB, IAMBClaimReceiver } from "../src/interfaces/IAMB.sol";
 import { IHomeXDaiBridge } from "../src/interfaces/IHomeXDaiBridge.sol";
 import { INonceXDaiBridge } from "../src/interfaces/INonceXDaiBridge.sol";
 import { ISavingsXDaiAdapter } from "../src/interfaces/ISavingsXDaiAdapter.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { ChainConstants } from "../src/libraries/ChainConstants.sol";
-import { VaultClaimLib } from "../src/libraries/VaultClaimLib.sol";
+import { BridgeClaimLib } from "../src/libraries/BridgeClaimLib.sol";
 import { MockERC20 } from "./mocks/MockERC20.sol";
 import { MockERC4626 } from "./mocks/MockERC4626.sol";
 import { MockNonceXDaiBridge } from "./mocks/MockNonceXDaiBridge.sol";
@@ -18,9 +18,9 @@ import { MockHomeXDaiBridge } from "./mocks/MockHomeXDaiBridge.sol";
 import { MockAMB } from "./mocks/MockAMB.sol";
 import { MockVaultAdapter } from "./mocks/MockVaultAdapter.sol";
 
-abstract contract AmbVaultFixture is Test {
+abstract contract AmbRouterFixture is Test {
     MainnetAmbBridgeRouter internal router;
-    SavingsXDaiSettlementVault internal vault;
+    GnosisAmbSettlementRouter internal vault;
     MockERC20 internal usds;
     MockERC4626 internal susds;
     MockNonceXDaiBridge internal foreign;
@@ -45,7 +45,7 @@ abstract contract AmbVaultFixture is Test {
         address expectedRouter =
             vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
         vm.chainId(100);
-        vault = new SavingsXDaiSettlementVault(
+        vault = new GnosisAmbSettlementRouter(
             IHomeXDaiBridge(address(home)),
             IAMB(address(amb)),
             ISavingsXDaiAdapter(address(adapter)),
@@ -57,9 +57,12 @@ abstract contract AmbVaultFixture is Test {
             INonceXDaiBridge(address(foreign)),
             IAMB(address(sourceAMB)),
             address(home),
-            address(vault)
+            address(vault),
+            address(this)
         );
         assertEq(address(router), expectedRouter);
+        vm.prank(address(this));
+        router.resume();
     }
 
     function _bridgeUSDS(uint256 amount, uint256 minimum) internal returns (bytes32 id) {
@@ -85,7 +88,7 @@ abstract contract AmbVaultFixture is Test {
     }
 
     function _deliverClaim(
-        VaultClaimLib.Claim memory c,
+        BridgeClaimLib.Claim memory c,
         address sender,
         uint256 chain,
         uint256 gasLimit
@@ -102,7 +105,7 @@ abstract contract AmbVaultFixture is Test {
 
     function _execute(bytes32 id) internal {
         vm.chainId(100);
-        VaultClaimLib.Claim memory c = router.getClaim(id);
+        BridgeClaimLib.Claim memory c = router.getClaim(id);
         home.setProcessed(
             keccak256(abi.encodePacked(address(vault), c.amount, c.bridgeNonce)), true
         );

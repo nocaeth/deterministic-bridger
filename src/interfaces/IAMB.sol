@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { VaultClaimLib } from "../libraries/VaultClaimLib.sol";
+import { BridgeClaimLib } from "../libraries/BridgeClaimLib.sol";
 
 /// @notice AMB delivery context and lane configuration used by the claim protocol.
 interface IAMB {
@@ -26,5 +26,5 @@ interface IAMB {
 /// @notice Destination handler for immutable source claims.
 interface IAMBClaimReceiver {
     /// @notice Registers a claim delivered by the authenticated source router.
-    function registerClaim(VaultClaimLib.Claim calldata claim) external returns (bytes32);
+    function registerClaim(BridgeClaimLib.Claim calldata claim) external returns (bytes32);
 }

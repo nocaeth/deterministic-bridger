@@ -10,6 +10,9 @@ library ChainConstants {
     /// @notice Ethereum USDS token currently accepted by the canonical xDai bridge.
     address internal constant ETHEREUM_USDS = 0xdC035D45d973E3EC169d2276DDab16f1e407384F;
 
+    /// @notice DAI is an alternate token for a canonical above-limit bridge return.
+    address internal constant ETHEREUM_DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+
     /// @notice Ethereum sUSDS ERC-4626 vault accepted by the router as an input token.
     address internal constant ETHEREUM_SUSDS = 0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD;
 

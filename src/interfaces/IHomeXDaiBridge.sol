@@ -7,8 +7,6 @@ interface IHomeXDaiBridge {
     function numAffirmationsSigned(bytes32 transferHash) external view returns (uint256);
     /// @notice Checks the processed flag in an affirmation count.
     function isAlreadyProcessed(uint256 count) external pure returns (bool);
-    /// @notice Returns the bridge proxy's current implementation.
-    function implementation() external view returns (address);
     /// @notice Returns the configured fee manager, or zero when absent.
     function feeManagerContract() external view returns (address);
     /// @notice Returns the configured amount decimal shift.

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "sdai-amb-vault",
+      "name": "sdai-amb-router",
       "dependencies": {
         "ethers": "^6.13.5",
       },

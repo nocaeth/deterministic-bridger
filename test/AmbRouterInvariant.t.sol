@@ -3,11 +3,11 @@ pragma solidity ^0.8.35;
 
 import { StdInvariant } from "forge-std/StdInvariant.sol";
 import { Test } from "forge-std/Test.sol";
-import { AmbVaultFixture } from "./AmbVaultFixture.sol";
-import { SavingsXDaiSettlementVault as Vault } from "../src/SavingsXDaiSettlementVault.sol";
-import { VaultClaimLib } from "../src/libraries/VaultClaimLib.sol";
+import { AmbRouterFixture } from "./AmbRouterFixture.sol";
+import { GnosisAmbSettlementRouter as Vault } from "../src/GnosisAmbSettlementRouter.sol";
+import { BridgeClaimLib } from "../src/libraries/BridgeClaimLib.sol";
 
-contract AmbVaultHandler is AmbVaultFixture {
+contract AmbRouterHandler is AmbRouterFixture {
     struct Model {
         bytes32 bridgeNonce;
         address recipient;
@@ -110,7 +110,7 @@ contract AmbVaultHandler is AmbVaultFixture {
         if (ids.length == 0) return;
         bytes32 id = ids[seed % ids.length];
         if (!model[id].registered) return;
-        VaultClaimLib.Claim memory c = router.getClaim(id);
+        BridgeClaimLib.Claim memory c = router.getClaim(id);
         uint256 field = uint256(fieldSeed) % 4;
         if (field == 0) c.payer = address(uint160(c.payer) ^ 1);
         else if (field == 1) c.recipient = address(uint160(c.recipient) ^ 1);
@@ -135,19 +135,17 @@ contract AmbVaultHandler is AmbVaultFixture {
     function unsupportedBridge(uint256 seed, uint8 modeSeed) external {
         if (ids.length == 0) return;
         bytes32 id = ids[seed % ids.length];
-        uint256 mode = uint256(modeSeed) % 6;
+        uint256 mode = uint256(modeSeed) % 5;
         vm.chainId(100);
         if (mode == 0) {
             home.setFeeManager(address(1));
         } else if (mode == 1) {
             home.setDecimalShift(1);
         } else if (mode == 2) {
-            home.setImplementation(address(1));
-        } else if (mode == 3) {
             vm.mockCallRevert(
                 address(home), abi.encodeWithSelector(home.feeManagerContract.selector), ""
             );
-        } else if (mode == 4) {
+        } else if (mode == 3) {
             vm.mockCallRevert(
                 address(home), abi.encodeWithSelector(home.numAffirmationsSigned.selector), ""
             );
@@ -161,7 +159,6 @@ contract AmbVaultHandler is AmbVaultFixture {
         assertEq(adapter.callCount(), beforeCount);
         home.setFeeManager(address(0));
         home.setDecimalShift(0);
-        home.setImplementation(address(home));
         vm.clearMockedCalls();
     }
 
@@ -197,7 +194,7 @@ contract AmbVaultHandler is AmbVaultFixture {
             bytes32 id = ids[i];
             Model memory expected = model[id];
             assertLe(expected.payments, 1);
-            (VaultClaimLib.Claim memory original, Vault.ClaimStatus status, uint256 minimum) =
+            (BridgeClaimLib.Claim memory original, Vault.ClaimStatus status, uint256 minimum) =
                 vault.getClaim(id);
             if (expected.registered) {
                 assertEq(original.payer, payer);
@@ -224,11 +221,11 @@ contract AmbVaultHandler is AmbVaultFixture {
     }
 }
 
-contract AmbVaultInvariantTest is StdInvariant, Test {
-    AmbVaultHandler internal handler;
+contract AmbRouterInvariantTest is StdInvariant, Test {
+    AmbRouterHandler internal handler;
 
     function setUp() public {
-        handler = new AmbVaultHandler();
+        handler = new AmbRouterHandler();
         handler.setUp();
         bytes4[] memory selectors = new bytes4[](13);
         selectors[0] = handler.create.selector;

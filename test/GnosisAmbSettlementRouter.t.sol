@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { AmbVaultFixture } from "./AmbVaultFixture.sol";
-import { SavingsXDaiSettlementVault as Vault } from "../src/SavingsXDaiSettlementVault.sol";
-import { VaultClaimLib } from "../src/libraries/VaultClaimLib.sol";
+import { AmbRouterFixture } from "./AmbRouterFixture.sol";
+import { GnosisAmbSettlementRouter as Vault } from "../src/GnosisAmbSettlementRouter.sol";
+import { BridgeClaimLib } from "../src/libraries/BridgeClaimLib.sol";
 import { IAMBClaimReceiver } from "../src/interfaces/IAMB.sol";
 
-contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
+contract GnosisAmbSettlementRouterTest is AmbRouterFixture {
     event MinimumSharesLowered(bytes32 indexed claimId, uint256 newMinimum);
 
     function testMinimumChangeEventMatchesPublishedAbi() external {
@@ -85,7 +85,7 @@ contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
 
     function testOnlyAuthenticatedSourceMayRegister() external {
         bytes32 id = _bridgeUSDS(5 ether, 0);
-        VaultClaimLib.Claim memory c = router.getClaim(id);
+        BridgeClaimLib.Claim memory c = router.getClaim(id);
         vm.chainId(100);
         vm.expectRevert(Vault.UnauthorizedMessage.selector);
         vault.registerClaim(c);
@@ -99,7 +99,7 @@ contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
 
     function testZeroClaimFieldsRejected() external {
         bytes32 id = _bridgeUSDS(5 ether, 0);
-        VaultClaimLib.Claim memory c = router.getClaim(id);
+        BridgeClaimLib.Claim memory c = router.getClaim(id);
         c.payer = address(0);
         assertFalse(_deliverClaim(c, address(router), 1, 700_000));
         c = router.getClaim(id);
@@ -179,13 +179,33 @@ contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
         assertEq(address(vault).balance, 1 ether);
     }
 
+    function testExistingBridgeCreditCanSettleAnotherProcessedClaimWithoutSponsor() external {
+        bytes32 first = _bridgeUSDS(5 ether, 0);
+        bytes32 second = _bridgeUSDS(6 ether, 0);
+        _execute(first);
+        _execute(second);
+        _credit(6 ether); // Only the second transfer has credited native xDAI so far.
+        _deliver(first);
+        assertEq(adapter.totalValue(), 5 ether);
+        _deliver(second);
+        _pending(second);
+        assertEq(
+            uint256(vault.settlementStatus(second)),
+            uint256(Vault.SettlementResult.WaitingForLiquidity)
+        );
+        _credit(5 ether);
+        vault.settle(second);
+        assertEq(adapter.totalValue(), 11 ether);
+        assertEq(address(vault).balance, 0);
+    }
+
     function testDuplicatePreservesLoweredMinimumAndConflictingOriginalRejected() external {
         bytes32 id = _bridgeUSDS(5 ether, 10 ether);
         _deliver(id);
         vm.prank(recipient);
         vault.lowerMinShares(id, 4 ether);
         assertTrue(_deliver(id));
-        (VaultClaimLib.Claim memory original,, uint256 minimum) = vault.getClaim(id);
+        (BridgeClaimLib.Claim memory original,, uint256 minimum) = vault.getClaim(id);
         assertEq(original.minShares, 10 ether);
         assertEq(minimum, 4 ether);
         original.recipient = payer;
@@ -309,16 +329,35 @@ contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
         vault.settle(pending);
         _pending(pending);
         home.setDecimalShift(0);
-        home.setImplementation(address(1));
-        vault.settle(pending);
-        _pending(pending);
-        home.setImplementation(address(home));
         vm.mockCallRevert(
             address(home), abi.encodeWithSelector(home.feeManagerContract.selector), ""
         );
         vault.settle(pending);
         _pending(pending);
-        assertEq(adapter.callCount(), 1);
+        vm.clearMockedCalls();
+        home.setImplementation(address(1));
+        vault.settle(pending);
+        assertEq(uint256(vault.settlementStatus(pending)), uint256(Vault.SettlementResult.Paid));
+        assertEq(adapter.callCount(), 2);
+    }
+
+    function testRevertingBridgeGettersPauseSettlement() external {
+        bytes32 id = _bridgeUSDS(5 ether, 0);
+        _execute(id);
+        _deliver(id);
+        _credit(5 ether);
+        bytes4[2] memory selectors = [home.feeManagerContract.selector, home.decimalShift.selector];
+        for (uint256 i; i < selectors.length; ++i) {
+            vm.mockCallRevert(address(home), abi.encodeWithSelector(selectors[i]), "");
+            assertEq(
+                uint256(vault.settlementStatus(id)),
+                uint256(Vault.SettlementResult.UnsupportedBridgeConfig)
+            );
+            vault.settle(id);
+            _pending(id);
+            vm.clearMockedCalls();
+        }
+        assertEq(adapter.callCount(), 0);
     }
 
     function testUnknownAndPaidSettlementAreNoOps() external {
@@ -339,7 +378,7 @@ contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
     ) external {
         uint256 amount = bound(amountSeed, 1, 1e30);
         bytes32 id = _bridgeUSDS(amount, 0);
-        VaultClaimLib.Claim memory claim = router.getClaim(id);
+        BridgeClaimLib.Claim memory claim = router.getClaim(id);
         _execute(id);
         _credit(amount);
         if (attacker == address(amb)) attacker = address(1);
@@ -377,7 +416,7 @@ contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
         vm.prank(recipient);
         vault.lowerMinShares(id, newMinimum);
         assertTrue(_deliver(id));
-        (VaultClaimLib.Claim memory original, Vault.ClaimStatus status, uint256 effectiveMinimum) =
+        (BridgeClaimLib.Claim memory original, Vault.ClaimStatus status, uint256 effectiveMinimum) =
             vault.getClaim(id);
         assertEq(original.recipient, recipient);
         assertEq(original.minShares, originalMinimum);
@@ -434,7 +473,7 @@ contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
     ) external {
         uint256 amount = bound(amountSeed, 1, 1e30);
         bytes32 id = _bridgeUSDS(amount, 0);
-        VaultClaimLib.Claim memory claim = router.getClaim(id);
+        BridgeClaimLib.Claim memory claim = router.getClaim(id);
         if (wrongNonce == claim.bridgeNonce) wrongNonce = bytes32(uint256(wrongNonce) ^ 1);
         if (wrongReceiver == address(vault)) wrongReceiver = address(1);
         _credit(amount);

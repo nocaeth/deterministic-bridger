@@ -4,12 +4,12 @@ pragma solidity ^0.8.35;
 import { IAMB, IAMBClaimReceiver } from "./interfaces/IAMB.sol";
 import { IHomeXDaiBridge } from "./interfaces/IHomeXDaiBridge.sol";
 import { ISavingsXDaiAdapter } from "./interfaces/ISavingsXDaiAdapter.sol";
-import { VaultClaimLib } from "./libraries/VaultClaimLib.sol";
+import { BridgeClaimLib } from "./libraries/BridgeClaimLib.sol";
 import { ReentrancyGuard } from "./utils/ReentrancyGuard.sol";
 import { ChainConstants } from "./libraries/ChainConstants.sol";
 
 /// @notice Registers AMB claims and settles executed canonical xDAI transfers into sDAI.
-contract SavingsXDaiSettlementVault is IAMBClaimReceiver, ReentrancyGuard {
+contract GnosisAmbSettlementRouter is IAMBClaimReceiver, ReentrancyGuard {
     error InvalidConfig();
     error UnauthorizedMessage();
     error InvalidClaim();
@@ -38,11 +38,9 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver, ReentrancyGuard {
     ISavingsXDaiAdapter public immutable adapter;
     address public immutable sourceRouter;
     address public immutable foreignBridge;
-    address public immutable bridgeImplementation;
-    bytes32 public immutable bridgeImplementationCodeHash;
 
     struct StoredClaim {
-        VaultClaimLib.Claim original;
+        BridgeClaimLib.Claim original;
         ClaimStatus status;
         uint256 minimumShares;
     }
@@ -79,15 +77,11 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver, ReentrancyGuard {
         ) {
             revert InvalidConfig();
         }
-        address implementation = homeBridge_.implementation();
-        if (implementation.code.length == 0) revert InvalidConfig();
         homeBridge = homeBridge_;
         homeAMB = homeAMB_;
         adapter = adapter_;
         sourceRouter = sourceRouter_;
         foreignBridge = foreignBridge_;
-        bridgeImplementation = implementation;
-        bridgeImplementationCodeHash = implementation.codehash;
     }
 
     /// @notice Accepts permanent sponsor funding; this contract has no withdrawal function.
@@ -97,7 +91,7 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver, ReentrancyGuard {
     function getClaim(bytes32 id)
         external
         view
-        returns (VaultClaimLib.Claim memory original, ClaimStatus status, uint256 minimumShares)
+        returns (BridgeClaimLib.Claim memory original, ClaimStatus status, uint256 minimumShares)
     {
         StoredClaim storage storedClaim = claims[id];
         return (storedClaim.original, storedClaim.status, storedClaim.minimumShares);
@@ -105,7 +99,7 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver, ReentrancyGuard {
 
     /// @notice Registers a source-router claim authenticated by the configured AMB.
     /// @dev An identical replay preserves payment state and any lowered minimum.
-    function registerClaim(VaultClaimLib.Claim calldata original) external returns (bytes32 id) {
+    function registerClaim(BridgeClaimLib.Claim calldata original) external returns (bytes32 id) {
         _requireNotEntered();
         if (
             block.chainid != ChainConstants.GNOSIS_CHAIN_ID || msg.sender != address(homeAMB)
@@ -119,7 +113,7 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver, ReentrancyGuard {
         ) {
             revert InvalidClaim();
         }
-        id = VaultClaimLib.id(
+        id = BridgeClaimLib.id(
             sourceRouter, foreignBridge, address(homeBridge), address(this), original.bridgeNonce
         );
         StoredClaim storage storedClaim = claims[id];
@@ -177,17 +171,7 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver, ReentrancyGuard {
     }
 
     function _supportedBridge() private view returns (bool) {
-        if (
-            block.chainid != ChainConstants.GNOSIS_CHAIN_ID
-                || bridgeImplementation.codehash != bridgeImplementationCodeHash
-        ) {
-            return false;
-        }
-        try homeBridge.implementation() returns (address implementation) {
-            if (implementation != bridgeImplementation) return false;
-        } catch {
-            return false;
-        }
+        if (block.chainid != ChainConstants.GNOSIS_CHAIN_ID) return false;
         try homeBridge.feeManagerContract() returns (address manager) {
             if (manager != address(0)) return false;
         } catch {

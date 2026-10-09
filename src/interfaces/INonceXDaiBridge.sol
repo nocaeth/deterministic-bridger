@@ -9,6 +9,6 @@ interface INonceXDaiBridge is IXDaiBridge {
     function nonce() external view returns (uint256);
     /// @notice Returns the token accepted by the bridge.
     function erc20token() external view returns (address);
-    /// @notice Returns the bridge proxy's current implementation.
+    /// @notice Current proxy implementation, used to stop deposits after upgrades.
     function implementation() external view returns (address);
 }

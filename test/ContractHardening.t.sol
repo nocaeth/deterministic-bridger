@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-import { AmbVaultFixture } from "./AmbVaultFixture.sol";
+import { AmbRouterFixture } from "./AmbRouterFixture.sol";
 import { MainnetAmbBridgeRouter } from "../src/MainnetAmbBridgeRouter.sol";
-import { SavingsXDaiSettlementVault } from "../src/SavingsXDaiSettlementVault.sol";
+import { GnosisAmbSettlementRouter } from "../src/GnosisAmbSettlementRouter.sol";
 import { IAMB } from "../src/interfaces/IAMB.sol";
 import { IHomeXDaiBridge } from "../src/interfaces/IHomeXDaiBridge.sol";
 import { INonceXDaiBridge } from "../src/interfaces/INonceXDaiBridge.sol";
 import { ISavingsXDaiAdapter } from "../src/interfaces/ISavingsXDaiAdapter.sol";
 
-contract ContractHardeningTest is AmbVaultFixture {
+contract ContractHardeningTest is AmbRouterFixture {
     function testConstructorRejectsSavingsUnderlyingMismatch() external {
         vm.mockCall(address(susds), abi.encodeWithSignature("asset()"), abi.encode(recipient));
         vm.expectRevert(MainnetAmbBridgeRouter.InvalidConfig.selector);
@@ -21,16 +21,26 @@ contract ContractHardeningTest is AmbVaultFixture {
         vm.expectRevert(MainnetAmbBridgeRouter.InvalidConfig.selector);
         _deployRouter();
         vm.chainId(1);
-        vm.expectRevert(SavingsXDaiSettlementVault.InvalidConfig.selector);
+        vm.expectRevert(GnosisAmbSettlementRouter.InvalidConfig.selector);
+        _deployVault();
+    }
+
+    function testRouterRequiresBridgeImplementationGetterButVaultDoesNot() external {
+        vm.mockCallRevert(address(foreign), abi.encodeWithSignature("implementation()"), "");
+        vm.expectRevert();
+        _deployRouter();
+        vm.clearMockedCalls();
+        vm.chainId(100);
+        vm.mockCallRevert(address(home), abi.encodeWithSignature("implementation()"), "");
         _deployVault();
     }
 
     function testRouterRejectsUnsupportedDependencies() external {
         _rejectRouterGetter(address(foreign), "erc20token()", abi.encode(recipient));
-        _rejectRouterGetter(address(foreign), "implementation()", abi.encode(address(0)));
         _rejectRouterGetter(address(sourceAMB), "sourceChainId()", abi.encode(uint256(100)));
         _rejectRouterGetter(address(sourceAMB), "destinationChainId()", abi.encode(uint256(1)));
         _rejectRouterGetter(address(sourceAMB), "maxGasPerTx()", abi.encode(uint256(699_999)));
+        _rejectRouterGetter(address(foreign), "implementation()", abi.encode(address(0)));
     }
 
     function testRouterRequiresLocalContractCode() external {
@@ -43,11 +53,27 @@ contract ContractHardeningTest is AmbVaultFixture {
     function testRouterRejectsMissingRemoteAddresses() external {
         vm.expectRevert(MainnetAmbBridgeRouter.InvalidConfig.selector);
         new MainnetAmbBridgeRouter(
-            INonceXDaiBridge(address(foreign)), IAMB(address(sourceAMB)), address(0), address(vault)
+            INonceXDaiBridge(address(foreign)),
+            IAMB(address(sourceAMB)),
+            address(0),
+            address(vault),
+            address(this)
         );
         vm.expectRevert(MainnetAmbBridgeRouter.InvalidConfig.selector);
         new MainnetAmbBridgeRouter(
-            INonceXDaiBridge(address(foreign)), IAMB(address(sourceAMB)), address(home), address(0)
+            INonceXDaiBridge(address(foreign)),
+            IAMB(address(sourceAMB)),
+            address(home),
+            address(0),
+            address(this)
+        );
+        vm.expectRevert(MainnetAmbBridgeRouter.InvalidConfig.selector);
+        new MainnetAmbBridgeRouter(
+            INonceXDaiBridge(address(foreign)),
+            IAMB(address(sourceAMB)),
+            address(home),
+            address(vault),
+            address(0)
         );
     }
 
@@ -56,7 +82,6 @@ contract ContractHardeningTest is AmbVaultFixture {
         _rejectVaultGetter(address(home), "feeManagerContract()", abi.encode(recipient));
         _rejectVaultGetter(address(home), "decimalShift()", abi.encode(int256(1)));
         _rejectVaultGetter(address(home), "decimalShift()", abi.encode(int256(-1)));
-        _rejectVaultGetter(address(home), "implementation()", abi.encode(address(0)));
         _rejectVaultGetter(address(amb), "sourceChainId()", abi.encode(uint256(1)));
         _rejectVaultGetter(address(amb), "destinationChainId()", abi.encode(uint256(100)));
     }
@@ -70,16 +95,16 @@ contract ContractHardeningTest is AmbVaultFixture {
 
     function testVaultRejectsMissingRemoteAddresses() external {
         vm.chainId(100);
-        vm.expectRevert(SavingsXDaiSettlementVault.InvalidConfig.selector);
-        new SavingsXDaiSettlementVault(
+        vm.expectRevert(GnosisAmbSettlementRouter.InvalidConfig.selector);
+        new GnosisAmbSettlementRouter(
             IHomeXDaiBridge(address(home)),
             IAMB(address(amb)),
             ISavingsXDaiAdapter(address(adapter)),
             address(0),
             address(foreign)
         );
-        vm.expectRevert(SavingsXDaiSettlementVault.InvalidConfig.selector);
-        new SavingsXDaiSettlementVault(
+        vm.expectRevert(GnosisAmbSettlementRouter.InvalidConfig.selector);
+        new GnosisAmbSettlementRouter(
             IHomeXDaiBridge(address(home)),
             IAMB(address(amb)),
             ISavingsXDaiAdapter(address(adapter)),
@@ -93,12 +118,13 @@ contract ContractHardeningTest is AmbVaultFixture {
             INonceXDaiBridge(address(foreign)),
             IAMB(address(sourceAMB)),
             address(home),
-            address(vault)
+            address(vault),
+            address(this)
         );
     }
 
-    function _deployVault() private returns (SavingsXDaiSettlementVault) {
-        return new SavingsXDaiSettlementVault(
+    function _deployVault() private returns (GnosisAmbSettlementRouter) {
+        return new GnosisAmbSettlementRouter(
             IHomeXDaiBridge(address(home)),
             IAMB(address(amb)),
             ISavingsXDaiAdapter(address(adapter)),
@@ -120,7 +146,7 @@ contract ContractHardeningTest is AmbVaultFixture {
         private
     {
         vm.mockCall(target, abi.encodeWithSignature(signature), result);
-        vm.expectRevert(SavingsXDaiSettlementVault.InvalidConfig.selector);
+        vm.expectRevert(GnosisAmbSettlementRouter.InvalidConfig.selector);
         _deployVault();
         vm.clearMockedCalls();
     }
@@ -136,7 +162,7 @@ contract ContractHardeningTest is AmbVaultFixture {
     function _rejectVaultCode(address target) private {
         bytes memory code = target.code;
         vm.etch(target, "");
-        vm.expectRevert(SavingsXDaiSettlementVault.InvalidConfig.selector);
+        vm.expectRevert(GnosisAmbSettlementRouter.InvalidConfig.selector);
         _deployVault();
         vm.etch(target, code);
     }

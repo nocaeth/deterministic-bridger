@@ -19,7 +19,7 @@ runs = 256
 depth = 500
 fail_on_revert = true
 
-[profile.amb_vault_fork]
+[profile.amb_router_fork]
 test = "test-fork"
 
 [rpc_endpoints]

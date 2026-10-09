@@ -4,8 +4,8 @@ pragma solidity ^0.8.35;
 import { ChainConstants } from "./ChainConstants.sol";
 
 /// @notice Immutable claim payload and bridge-lane-specific claim identity.
-library VaultClaimLib {
-    bytes32 private constant PROTOCOL_DOMAIN = keccak256("SDAI_AMB_VAULT_V1");
+library BridgeClaimLib {
+    bytes32 private constant PROTOCOL_DOMAIN = keccak256("SDAI_AMB_ROUTER_V1");
 
     struct Claim {
         /// @notice Canonical foreign bridge nonce consumed by this transfer.
@@ -25,7 +25,7 @@ library VaultClaimLib {
         address router,
         address foreignBridge,
         address homeBridge,
-        address vault,
+        address gnosisRouter,
         bytes32 bridgeNonce
     ) internal pure returns (bytes32) {
         return keccak256(
@@ -36,7 +36,7 @@ library VaultClaimLib {
                 router,
                 foreignBridge,
                 homeBridge,
-                vault,
+                gnosisRouter,
                 bridgeNonce
             )
         );

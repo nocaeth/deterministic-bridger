@@ -6,7 +6,7 @@ import { MainnetAmbBridgeRouter } from "../src/MainnetAmbBridgeRouter.sol";
 import { IAMB } from "../src/interfaces/IAMB.sol";
 import { INonceXDaiBridge } from "../src/interfaces/INonceXDaiBridge.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
-import { VaultClaimLib } from "../src/libraries/VaultClaimLib.sol";
+import { BridgeClaimLib } from "../src/libraries/BridgeClaimLib.sol";
 import { ChainConstants } from "../src/libraries/ChainConstants.sol";
 import { MockERC20 } from "./mocks/MockERC20.sol";
 import { MockERC4626 } from "./mocks/MockERC4626.sol";
@@ -23,6 +23,7 @@ contract MainnetAmbBridgeRouterTest is Test {
     address internal payer = address(0xB0B);
     address internal recipient = address(0xA11CE);
     address internal vault = address(0x1234);
+    address internal pauseAuthority = address(0xCAFE);
 
     function setUp() public {
         vm.chainId(1);
@@ -34,8 +35,110 @@ contract MainnetAmbBridgeRouterTest is Test {
         foreign = new MockNonceXDaiBridge(IERC20(address(usds)));
         amb = new MockAMB(1, 100);
         router = new MainnetAmbBridgeRouter(
-            INonceXDaiBridge(address(foreign)), IAMB(address(amb)), address(0x5678), vault
+            INonceXDaiBridge(address(foreign)),
+            IAMB(address(amb)),
+            address(0x5678),
+            vault,
+            pauseAuthority
         );
+        assertTrue(router.deprecated());
+        assertFalse(router.depositsEnabled());
+        vm.prank(pauseAuthority);
+        router.resume();
+    }
+
+    function testUpgradeBlocksDepositsUntilCouncilVerifiesAndResumes() external {
+        usds.mint(payer, 2 ether);
+        vm.prank(payer);
+        usds.approve(address(router), 2 ether);
+        vm.prank(payer);
+        (bytes32 id,) = router.bridge(1 ether, 0);
+        assertTrue(router.depositsEnabled());
+        foreign.setImplementation(address(new MockNonceXDaiBridge(IERC20(address(usds)))));
+        assertFalse(router.depositsEnabled());
+        vm.expectRevert(MainnetAmbBridgeRouter.BridgeImplementationChanged.selector);
+        router.bridge(1 ether, 0);
+        vm.prank(pauseAuthority);
+        vm.expectRevert(MainnetAmbBridgeRouter.BridgeImplementationChanged.selector);
+        router.resume();
+        vm.prank(payer);
+        vm.expectRevert(MainnetAmbBridgeRouter.UnauthorizedDeprecation.selector);
+        router.resume();
+        vm.prank(payer);
+        vm.expectRevert(MainnetAmbBridgeRouter.UnauthorizedDeprecation.selector);
+        router.deprecate();
+        vm.prank(pauseAuthority);
+        router.deprecate();
+        assertTrue(router.deprecated());
+        vm.expectRevert(MainnetAmbBridgeRouter.RouterDeprecated.selector);
+        router.bridge(1 ether, 0);
+        vm.expectRevert(MainnetAmbBridgeRouter.RouterDeprecated.selector);
+        router.bridgeSavingsUSDS(1 ether, 0);
+        router.resendClaim(id);
+        assertEq(amb.submissions(), 2);
+        vm.prank(payer);
+        vm.expectRevert(MainnetAmbBridgeRouter.UnauthorizedDeprecation.selector);
+        router.verifyBridgeImplementation();
+        vm.prank(pauseAuthority);
+        router.verifyBridgeImplementation();
+        assertEq(router.verifiedBridgeImplementation(), foreign.implementation());
+        vm.prank(pauseAuthority);
+        router.resume();
+        assertTrue(router.depositsEnabled());
+        vm.prank(payer);
+        router.bridge(1 ether, 0);
+        vm.prank(pauseAuthority);
+        vm.expectRevert(MainnetAmbBridgeRouter.RouterActive.selector);
+        router.verifyBridgeImplementation();
+    }
+
+    function testImplementationGetterFailureAndMissingImplementationFailClosed() external {
+        vm.mockCallRevert(address(foreign), abi.encodeWithSignature("implementation()"), "");
+        assertFalse(router.depositsEnabled());
+        vm.expectRevert();
+        router.bridge(1 ether, 0);
+        vm.clearMockedCalls();
+        vm.prank(pauseAuthority);
+        router.deprecate();
+        foreign.setImplementation(address(0x1234));
+        vm.prank(pauseAuthority);
+        vm.expectRevert(MainnetAmbBridgeRouter.InvalidConfig.selector);
+        router.verifyBridgeImplementation();
+    }
+
+    function testOnlyAuthorityCanDeprecate() external {
+        vm.prank(payer);
+        vm.expectRevert(MainnetAmbBridgeRouter.UnauthorizedDeprecation.selector);
+        router.deprecate();
+        assertFalse(router.deprecated());
+    }
+
+    function testDeprecationBlocksDepositsButPreservesResend() external {
+        usds.mint(payer, 2 ether);
+        vm.prank(payer);
+        usds.approve(address(router), 2 ether);
+        vm.prank(payer);
+        (bytes32 id,) = router.bridge(1 ether, 0);
+        vm.prank(pauseAuthority);
+        router.deprecate();
+        assertTrue(router.deprecated());
+        vm.expectRevert(MainnetAmbBridgeRouter.RouterDeprecated.selector);
+        router.bridge(1 ether, 0);
+        vm.expectRevert(MainnetAmbBridgeRouter.RouterDeprecated.selector);
+        router.bridgeTo(recipient, 1 ether, 0);
+        vm.expectRevert(MainnetAmbBridgeRouter.RouterDeprecated.selector);
+        router.bridgeSavingsUSDS(1 ether, 0);
+        vm.expectRevert(MainnetAmbBridgeRouter.RouterDeprecated.selector);
+        router.bridgeSavingsUSDSTo(recipient, 1 ether, 0);
+        vm.prank(pauseAuthority);
+        vm.expectRevert(MainnetAmbBridgeRouter.RouterDeprecated.selector);
+        router.deprecate();
+        vm.prank(pauseAuthority);
+        router.resume();
+        assertFalse(router.deprecated());
+        assertEq(foreign.nonce(), 1);
+        router.resendClaim(id);
+        assertEq(amb.submissions(), 2);
     }
 
     function _fundSavings(uint256 shares) internal {
@@ -50,7 +153,7 @@ contract MainnetAmbBridgeRouterTest is Test {
         _fundSavings(4 ether);
         vm.prank(payer);
         (bytes32 id, uint256 amount) = router.bridgeSavingsUSDSTo(recipient, 4 ether, 3 ether);
-        VaultClaimLib.Claim memory c = router.getClaim(id);
+        BridgeClaimLib.Claim memory c = router.getClaim(id);
         assertEq(c.payer, payer);
         assertEq(c.recipient, recipient);
         assertEq(c.amount, 8 ether);
@@ -121,8 +224,9 @@ contract MainnetAmbBridgeRouterTest is Test {
     function _expectSavingsRollback() internal {
         _fundSavings(5 ether);
         usds.mint(address(router), 7 ether);
-        bytes32 expected =
-            VaultClaimLib.id(address(router), address(foreign), address(0x5678), vault, bytes32(0));
+        bytes32 expected = BridgeClaimLib.id(
+            address(router), address(foreign), address(0x5678), vault, bytes32(0)
+        );
         vm.expectRevert();
         vm.prank(payer);
         router.bridgeSavingsUSDSTo(recipient, 5 ether, 0);
@@ -155,6 +259,23 @@ contract MainnetAmbBridgeRouterTest is Test {
         router.resendClaim(bytes32(uint256(99)));
     }
 
+    function testResendRejectsChangedAmbRoute() external {
+        usds.mint(payer, 5 ether);
+        vm.prank(payer);
+        usds.approve(address(router), 5 ether);
+        vm.prank(payer);
+        (bytes32 id,) = router.bridge(5 ether, 0);
+        vm.mockCall(
+            address(amb),
+            abi.encodeWithSelector(amb.destinationChainId.selector),
+            abi.encode(uint256(1))
+        );
+        vm.expectRevert(MainnetAmbBridgeRouter.InvalidConfig.selector);
+        router.resendClaim(id);
+        vm.clearMockedCalls();
+        assertEq(amb.submissions(), 1);
+    }
+
     function testRedemptionFailureNeverRelaysOrSendsClaim() external {
         _fundSavings(5 ether);
         vm.prank(payer);
@@ -164,6 +285,17 @@ contract MainnetAmbBridgeRouterTest is Test {
         router.bridgeSavingsUSDS(5 ether, 0);
         assertEq(susds.balanceOf(payer), 5 ether);
         assertEq(susds.allowance(payer, address(router)), 1 ether);
+        assertEq(foreign.nonce(), 0);
+        assertEq(amb.submissions(), 0);
+    }
+
+    function testZeroAssetRedemptionRollsBackShares() external {
+        _fundSavings(5 ether);
+        susds.setAssetsPerShare(0);
+        vm.expectRevert(MainnetAmbBridgeRouter.InvalidAmount.selector);
+        vm.prank(payer);
+        router.bridgeSavingsUSDS(5 ether, 0);
+        assertEq(susds.balanceOf(payer), 5 ether);
         assertEq(foreign.nonce(), 0);
         assertEq(amb.submissions(), 0);
     }
@@ -204,10 +336,14 @@ contract MainnetAmbBridgeRouterTest is Test {
         assertEq(amb.submissions(), 0);
     }
 
-    function testImplementationChangeCannotCreateNewClaim() external {
-        foreign.setImplementation(address(0xFADE));
+    function testBridgeTokenChangeCannotCreateNewClaim() external {
+        vm.mockCall(
+            address(foreign),
+            abi.encodeWithSelector(foreign.erc20token.selector),
+            abi.encode(recipient)
+        );
         vm.expectRevert(MainnetAmbBridgeRouter.UnsupportedBridge.selector);
-        router.bridge(1, 0);
+        router.bridge(1 ether, 0);
     }
 
     function testBridgeCallbackCannotResendExistingClaim() external {
@@ -242,7 +378,7 @@ contract MainnetAmbBridgeRouterTest is Test {
     }
 
     function testAmbCallbackCannotResendClaimBeingSubmitted() external {
-        bytes32 expectedId = VaultClaimLib.id(
+        bytes32 expectedId = BridgeClaimLib.id(
             address(router), address(foreign), address(0x5678), vault, bytes32(0)
         );
         amb.setReentry(address(router), abi.encodeCall(router.resendClaim, (expectedId)));
@@ -277,7 +413,7 @@ contract MainnetAmbBridgeRouterTest is Test {
         usds.approve(address(router), amount);
         vm.prank(payer);
         (bytes32 id, uint256 assets) = router.bridgeTo(receiver, amount, minimum);
-        VaultClaimLib.Claim memory claim = router.getClaim(id);
+        BridgeClaimLib.Claim memory claim = router.getClaim(id);
         assertEq(claim.payer, payer);
         assertEq(claim.recipient, receiver);
         assertEq(claim.amount, amount);
@@ -334,7 +470,7 @@ contract MainnetAmbBridgeRouterTest is Test {
         else if (failure == 1) foreign.setNonceDelta(0);
         else if (failure == 2) foreign.setPullShort(true);
         else amb.setRejectSubmission(true);
-        bytes32 id = VaultClaimLib.id(
+        bytes32 id = BridgeClaimLib.id(
             address(router), address(foreign), address(0x5678), vault, bytes32(0)
         );
         vm.expectRevert();

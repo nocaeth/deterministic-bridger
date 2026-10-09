@@ -7,7 +7,7 @@ import { INonceXDaiBridge } from "../src/interfaces/INonceXDaiBridge.sol";
 import { IAMB } from "../src/interfaces/IAMB.sol";
 import { ChainConstants } from "../src/libraries/ChainConstants.sol";
 
-/// @notice Deploys the Ethereum router at the address already trusted by the Gnosis vault.
+/// @notice Simulates router deployment for fork regression tests; never broadcasts.
 contract DeployAmbRouter is Script {
     /// @notice Validates the expected CREATE nonce and deploys with the configured bridge and AMB.
     function run() external returns (MainnetAmbBridgeRouter router) {
@@ -21,14 +21,15 @@ contract DeployAmbRouter is Script {
                 && vm.computeCreateAddress(deployer, nonce) == expectedRouter,
             "DEPLOYER_NONCE_CHANGED"
         );
-        address vault = vm.envAddress("AMB_VAULT");
+        address gnosisRouter = vm.envAddress("AMB_GNOSIS_ROUTER");
         address home = vm.envOr("HOME_XDAI_BRIDGE", ChainConstants.GNOSIS_XDAI_BRIDGE);
         INonceXDaiBridge foreign =
             INonceXDaiBridge(vm.envOr("ETHEREUM_XDAI_BRIDGE", ChainConstants.ETHEREUM_XDAI_BRIDGE));
         IAMB amb = IAMB(vm.envAddress("ETHEREUM_AMB"));
-        vm.startBroadcast(key);
-        router = new MainnetAmbBridgeRouter(foreign, amb, home, vault);
-        vm.stopBroadcast();
+        address pauseAuthority = vm.envAddress("MAINNET_PAUSE_AUTHORITY");
+        vm.startPrank(deployer);
+        router = new MainnetAmbBridgeRouter(foreign, amb, home, gnosisRouter, pauseAuthority);
+        vm.stopPrank();
         require(address(router) == expectedRouter, "ROUTER_ADDRESS_MISMATCH");
     }
 }

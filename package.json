@@ -1,11 +1,12 @@
 {
-  "name": "sdai-amb-vault",
+  "name": "sdai-amb-router",
   "private": true,
   "type": "commonjs",
   "scripts": {
     "install:foundry": "forge install foundry-rs/forge-std --no-git --shallow",
-    "check:executor": "node --check script/vault-settler.mjs",
-    "test:vault-settler": "node --test script/test/vault-settler.test.mjs"
+    "check:executor": "node --check script/router-settler.mjs",
+    "test:router-settler": "node --test script/test/router-settler.test.mjs",
+    "test:deployment": "node --test script/test/deploy-amb.test.mjs"
   },
   "dependencies": {
     "ethers": "^6.13.5"

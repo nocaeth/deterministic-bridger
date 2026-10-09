@@ -1,8 +1,12 @@
-# Frontend integration for the AMB vault route
+# Frontend integration for the AMB settlement router route
 
 This repository contains contracts and the executor, not a frontend application.
-Use the `MainnetAmbBridgeRouter` and `SavingsXDaiSettlementVault` ABIs in `out/`
+Use the `MainnetAmbBridgeRouter` and `GnosisAmbSettlementRouter` ABIs in `out/`
 after `forge build`. Configure verified deployments as a reciprocal pair.
+Check `depositsEnabled()` on the Ethereum router before offering a new deposit.
+False means the council has deprecated it or the Ethereum bridge implementation
+changed. Recheck after council review; a replacement router is needed only if this
+one cannot safely resume. Existing `resendClaim` remains available.
 
 ## Ethereum wallet interaction
 
@@ -14,7 +18,7 @@ after `forge build`. Configure verified deployments as a reciprocal pair.
 | sUSDS to chosen recipient | `bridgeSavingsUSDSTo(recipient, shares, minShares)` | sUSDS share allowance to source router |
 
 Amounts and shares use 18 decimal base units. `minShares` is minimum **destination
-sDAI shares**, not xDAI assets. Zero disables a price floor but the vault still
+sDAI shares**, not xDAI assets. Zero disables a price floor but the settlement router still
 requires positive shares. Quote conservatively using current adapter/savings
 pricing and disclose price movement while in flight. There is no deadline or
 automatic cancellation. A minimum that cannot be met leaves Pending work until
@@ -24,7 +28,7 @@ All methods return `(bytes32 claimId, uint256 assets)` in simulation. Extract th
 actual `ClaimBridged` from the mined Ethereum receipt, emitted by the verified
 router. Its fields are indexed `claimId`, `payer`, `recipient`, followed by
 `bridgeNonce`, `amount`, `minShares`, `ambMessageId`. Actual redeemed assets can
-differ from the frontend's quote. Persist source chain/router, vault, claim ID,
+differ from the frontend's quote. Persist source chain/router, settlement router, claim ID,
 transaction hash and payload for reload recovery. A frontend event is a display
 hint; it does not authorize Gnosis payment.
 
@@ -43,7 +47,7 @@ payer, recipient, amount and minShares. `status` is Unknown=0, Pending=1, Paid=2
 | Unknown | 0 | Waiting for claim registration; inspect AMB delivery before recovery |
 | Paid | 1 | Completed; obtain actual shares from `ClaimPaid` |
 | WaitingForBridge | 2 | Canonical destination transfer not executed yet |
-| WaitingForLiquidity | 3 | Bridge executed; waiting for spendable vault xDAI |
+| WaitingForLiquidity | 3 | Bridge executed; waiting for spendable settlement router xDAI |
 | UnsupportedBridgeConfig | 4 | Protocol compatibility blocked; operator review required |
 | Ready | 5 | Ready for executor; adapter/minimum can still prevent conversion |
 
@@ -78,9 +82,9 @@ Do not ask users to submit a second bridge transaction to repair a callback.
 Delayed canonical transfers, exhausted bridge limits and native credits are
 independent of AMB recovery.
 
-On reload, re-read the vault instead of treating a cached transaction receipt or
+On reload, re-read the settlement router instead of treating a cached transaction receipt or
 webhook as completion. Allow confirmation/reorg handling for both chains. Show
-the [operations limits](AMB_VAULT_OPERATIONS.md), especially no timeout refund,
-no sponsor withdrawal and settlement freeze after incompatible bridge upgrades.
-The [security guide](AMB_VAULT_SECURITY.md) explains external validator,
+the [operations limits](AMB_ROUTER_OPERATIONS.md), especially no timeout refund,
+no sponsor withdrawal and possible settlement failure after incompatible bridge upgrades.
+The [security guide](AMB_ROUTER_SECURITY.md) explains external validator,
 governance, savings and contract-wallet assumptions that the product must disclose.
