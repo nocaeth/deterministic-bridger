@@ -1,58 +1,46 @@
-# FCR AMB sDAI Vault
+# USDS to sDAI through an AMB vault
 
-An Ethereum-to-Gnosis savings bridge using an immutable source router, a shared
-settlement vault, authenticated AMB claims and a durable Gnosis executor.
-Users supply USDS or sUSDS; sUSDS is redeemed to USDS before the canonical xDai
-bridge relay. This branch contains only the AMB vault architecture.
+This repository contains a new Ethereum-to-Gnosis savings route. A user approves USDS or
+sUSDS, then makes one Ethereum deposit transaction. The router redeems sUSDS when needed
+and sends USDS through the existing xDAI bridge. In that transaction, it also submits a
+claim to AMB. Either source call failing reverts the deposit; delivery on Gnosis happens
+later.
 
-The source transaction funds the bridge and submits its immutable claim
-atomically. The Gnosis vault pays only after authenticating the source router,
-checking the exact canonical transfer's processed marker and confirming enough
-spendable xDAI. It deposits exactly the claim amount through the savings adapter
-for the recorded recipient. Failed conversion leaves the claim pending for a
-safe retry; a paid claim can never pay again.
+On Gnosis, a shared vault waits for that exact bridge transfer to execute and for enough
+xDAI to be available. It then deposits the claim amount into savings for the chosen
+recipient. A separate executor retries delayed claims. The user normally makes no Gnosis
+transaction.
 
-## Architecture and integration
+The bridge and AMB contracts are existing infrastructure. The new router and vault do
+not change them. Their operators and governance remain part of the trust model.
 
-- [Architecture and funds-flow diagrams](docs/AMB_VAULT_ARCHITECTURE.md)
-- [Security, trust assumptions and ownership](docs/AMB_VAULT_SECURITY.md)
-- [Frontend integration and recovery states](docs/AMB_VAULT_FRONTEND.md)
-- [Deployment and operations](docs/AMB_VAULT_OPERATIONS.md)
-- [Pinned bridge evidence and verification results](docs/AMB_VAULT_INTEGRATION.md)
-- [Original design rationale](docs/superpowers/specs/2026-10-09-fcr-amb-vault-design.md)
-- [Original implementation plan](docs/superpowers/plans/2026-10-09-fcr-amb-vault.md)
+## Read the design
 
-## Components
+- [Architecture and funds flow](docs/AMB_VAULT_ARCHITECTURE.md) — the paths for assets
+  and claims, payment checks, and retries.
+- [Security and ownership](docs/AMB_VAULT_SECURITY.md) — each layer's powers and
+  failure boundaries.
+- [Frontend integration](docs/AMB_VAULT_FRONTEND.md) — wallet calls, statuses, and
+  message recovery.
+- [Deployment and operations](docs/AMB_VAULT_OPERATIONS.md) — setup, failures, and
+  rollout gates.
+- [Integration evidence](docs/AMB_VAULT_INTEGRATION.md) — pinned bridge observations
+  and test results.
 
-| Component | Responsibility |
-| --- | --- |
-| `MainnetAmbBridgeRouter` | Caller-funded USDS relay or sUSDS redemption; atomic AMB submission; stored-claim resend |
-| `SavingsXDaiSettlementVault` | Durable authenticated claims; execution/cash checks; minimum-share protection; at-most-once conversion |
-| `VaultClaimLib` | Shared payload and bridge-nonce-based claim identity |
-| `script/vault-settler.mjs` | Gnosis discovery, persistent retries, serialized transaction nonce and restart recovery |
-| `DeployAmbVault` / `DeployAmbRouter` | Reciprocal immutable deployment with Ethereum CREATE nonce checks |
+The [original design](docs/superpowers/specs/2026-10-09-fcr-amb-vault-design.md) and
+[implementation plan](docs/superpowers/plans/2026-10-09-fcr-amb-vault.md) are kept as
+project history.
 
-The application contracts have not been deployed. Public bridge/asset addresses
-in the integration evidence describe the tested canonical infrastructure, not
-new application deployments.
+## Run the checks
 
-Router and vault have no owner or upgrade mechanism. Payment guarantees depend
-on honest configured AMB/bridge behavior and the savings adapter; external
-validators and governance retain their authority. The executor controls timing
-and its gas account, not recipients or amounts. See the security guide for each
-layer's powers and failure boundaries.
-
-## Development
-
-Install the locked Node dependencies and Foundry's test library:
+Install the locked Node dependencies and Foundry test library:
 
 ```bash
 bun install --frozen-lockfile
 npm run install:foundry
 ```
 
-Copy `.env.example` to `.env` and supply configuration for the intended deployment.
-Keep RPC credentials and keys private. Local contract and executor checks:
+Run the local checks:
 
 ```bash
 forge build
@@ -60,39 +48,41 @@ forge fmt --check
 forge test
 npm run check:executor
 npm run test:vault-settler
+npm run test:deployment
 ```
 
-The separate pinned-fork suite requires both RPC URLs and access to historical
-state at the documented blocks; it fails if configuration or state is unavailable:
+The pinned fork tests also need Ethereum and Gnosis RPC URLs with access to the
+historical blocks in the [evidence guide](docs/AMB_VAULT_INTEGRATION.md):
 
 ```bash
 FOUNDRY_PROFILE=amb_vault_fork forge test -vv
 ```
 
-Deploy the Gnosis vault bound to the expected Ethereum router address first, then
-verify the Ethereum deployer nonce and deploy the router bound to the actual
-vault. The operations guide provides the dry-run commands and reciprocal checks.
+The paired [deployment script](docs/AMB_VAULT_OPERATIONS.md) checks both chains
+and their reciprocal contract addresses in dry-run mode before any transaction.
 
-## Completion executor
+## Run the executor
 
-Provision an existing persistent checkpoint directory and a dedicated Gnosis gas
-account. Set `AMB_VAULT`, `AMB_VAULT_DEPLOYMENT_BLOCK`, `GNOSIS_RPC_URL` and
+The executor needs a dedicated Gnosis gas account and a persistent checkpoint directory.
+Set `AMB_VAULT`, `AMB_VAULT_DEPLOYMENT_BLOCK`, `GNOSIS_RPC_URL` and
 `VAULT_SETTLER_PRIVATE_KEY`, then run:
 
 ```bash
 node --env-file=.env script/vault-settler.mjs
 ```
 
-The executor saves a signed transaction before broadcast and retries the same
-hash after ambiguous responses. File and directory sync establish checkpoint
-durability before submission. Each signer/state file has one process owner;
-independent executors use separate accounts and files. The vault remains the
-payment authority.
+Copy `.env.example` to `.env` for the full configuration and keep RPC credentials and
+keys private. See [operations](docs/AMB_VAULT_OPERATIONS.md) before running it outside
+local development.
 
-## Production gates
+## Before real deposits
 
-FCR can shorten confirmation latency, but selected xDai/AMB lane timing and real
-consensus-mint ordering require live validation. Fees, canonical implementation
-upgrades and refund/recovery policy remain explicit rollout decisions. Sponsored
-seed is permanently non-withdrawable in this version. Deployment, seed funding
-and traffic activation require separate authorization.
+The router and vault have no owner, upgrade or admin withdrawal function. A sponsor's
+xDAI buffer is a permanent donation. Claims can wait if the bridge, AMB, native credit
+or savings adapter is delayed; there is no application refund or deadline.
+
+[Fast Confirmation Rule](https://docs.gnosischain.com/bridges/fast-confirmation-rule)
+may shorten bridge validator waiting time. Live settings for both delivery paths,
+native credit ordering and recovery behavior still need validation. The
+[security guide](docs/AMB_VAULT_SECURITY.md) and
+[operations guide](docs/AMB_VAULT_OPERATIONS.md) list those decisions.

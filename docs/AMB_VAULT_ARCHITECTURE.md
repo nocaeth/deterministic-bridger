@@ -1,227 +1,142 @@
-# FCR-assisted AMB settlement vault
+# How the AMB vault bridge works
 
-Users approve USDS or sUSDS once, then make one Ethereum router transaction per
-deposit. That transaction funds the canonical xDai bridge and submits an AMB
-claim atomically. A shared Gnosis vault converts the corresponding xDAI into
-sDAI for the authenticated recipient. A Gnosis executor completes pending work;
-the user normally needs no Gnosis transaction or separate claim signature.
+A user approves USDS or sUSDS, then makes one Ethereum deposit transaction. The router
+redeems sUSDS when needed, sends USDS through the existing xDAI bridge, and submits a
+claim to AMB. Both calls happen in that transaction: if either source call fails, the
+deposit reverts. Delivery on Gnosis happens later.
 
-This architecture needs no change to either bridge. The router and settlement
-vault have not been deployed.
+On Gnosis, one shared vault receives the claim and is the destination for xDAI. It
+converts the claim amount to sDAI for the chosen recipient only after the exact bridge
+transfer has executed and the vault has enough xDAI. An executor retries pending claims,
+so the user normally makes no Gnosis transaction.
 
-## Architecture
+The router and vault are new application contracts and have not been deployed. The xDAI
+bridge and AMB contracts are existing infrastructure; this design does not change them.
 
-Solid arrows carry assets; dotted arrows carry claims, checks or retry calls.
+## Where the funds and claim go
 
-```mermaid
-flowchart LR
-  subgraph ETH["Ethereum · chain 1"]
-    U["Payer wallet"]
-    S["sUSDS vault"]
-    R["Immutable source router"]
-    F["Canonical foreign xDai bridge"]
-    FA["Foreign AMB"]
-    U -->|"USDS or sUSDS approval + router call"| R
-    R -->|"redeem caller sUSDS when chosen"| S
-    S -->|"USDS"| R
-    R -->|"exact USDS amount, destination = Gnosis vault"| F
-    R -.->|"stored Claim after successful relay"| FA
-  end
-  subgraph GNO["Gnosis · chain 100"]
-    H["Canonical home xDai bridge"]
-    HA["Home AMB"]
-    V["Shared settlement vault"]
-    A["Savings xDAI adapter"]
-    B["Recipient wallet · sDAI"]
-    K["Durable executor · separate gas account"]
-    P["Sponsor · permanent seed donation"]
-    H -->|"consensus credits native xDAI"| V
-    HA -.->|"authenticate source router + chain 1"| V
-    V -.->|"exact destination / amount / nonce processed?"| H
-    K -.->|"settle Pending claim"| V
-    P -->|"optional xDAI liquidity"| V
-    V -->|"exact claim amount in xDAI"| A
-    A -->|"sDAI shares"| B
-  end
-  F -->|"canonical bridge asset lane"| H
-  FA -.->|"independent AMB message lane"| HA
-```
-
-The source router, home bridge, foreign bridge, AMB endpoints and adapter are
-fixed in constructor configuration. Neither router nor vault has an admin,
-upgrade, arbitrary forwarding, sweep, timeout refund or recipient override.
-The canonical bridges and AMBs retain their own validator/governance trust.
-The [security and ownership guide](AMB_VAULT_SECURITY.md) lists each actor's
-authority, dependency assumptions and consequences of failure.
-
-## Funds and claim flow
+Solid arrows show assets. Dotted arrows show a message or a call.
 
 ```mermaid
-sequenceDiagram
-  actor P as Payer on Ethereum
-  participant R as Source router
-  participant F as Foreign xDai bridge
-  participant FA as Foreign AMB
-  participant H as Home xDai bridge
-  participant HA as Home AMB
-  participant V as Gnosis vault
-  participant K as Gnosis executor
-  participant A as Savings adapter
-  actor B as Recipient
-  P->>R: bridge or bridgeSavingsUSDS, amount/shares, minimum
-  Note over P,FA: One atomic Ethereum transaction (after token approval)
-  R->>R: transfer caller USDS or redeem caller sUSDS; measure USDS delta
-  R->>F: relayTokens(fixed vault, exact USDS); capture bridge nonce
-  R->>R: require exact token movement and nonce + 1; store immutable Claim
-  R->>FA: requireToPassMessage(vault, registerClaim(Claim), 700k gas)
-  Note over R,FA: Any failure rolls back redemption, relay and claim submission
-  par Independent bridge delivery
-    F-->>H: validator affirmation for vault, amount, nonce
-    H->>H: mark exact transfer processed; schedule native mint
-    H-->>V: consensus credit (no recipient call required)
-  and Independent claim delivery
-    FA-->>HA: relay authenticated source message
-    HA->>V: registerClaim with source-router / source-chain context
-    V->>V: durably store Pending; optional isolated settle attempt
+flowchart TB
+  subgraph Ethereum["Ethereum"]
+    User["User"]
+    Router["Source router"]
+    SourceBridge["xDAI bridge"]
+    SourceAMB["AMB"]
+    User -->|"USDS or sUSDS"| Router
+    Router -->|"USDS for the vault"| SourceBridge
+    Router -.->|"stored claim"| SourceAMB
   end
-  V->>H: processed(keccak256(vault, gross amount, bridge nonce))?
-  alt Processed and enough cash and adapter succeeds
-    V->>V: mark Paid before external adapter call
-    V->>A: depositXDAI{value: claim.amount}(stored recipient)
-    A-->>B: sDAI
-    V->>V: require positive shares >= effective minimum; emit ClaimPaid
-  else Missing execution, cash, or conversion failed
-    Note over V: Retain Pending; failed conversion rolls back its value and Paid state
-    K->>V: settle(claimId) later, by any caller
-    Note over K,V: Repeating Paid settlement is a no-op; caller cannot choose recipient
+
+  subgraph Gnosis["Gnosis Chain"]
+    HomeBridge["xDAI bridge"]
+    HomeAMB["AMB"]
+    Vault["Shared vault"]
+    Adapter["Savings adapter"]
+    Recipient["Recipient"]
+    HomeBridge -->|"xDAI credit"| Vault
+    HomeAMB -.->|"register claim"| Vault
+    Vault -->|"claim amount in xDAI"| Adapter
+    Adapter -->|"sDAI shares"| Recipient
   end
+
+  SourceBridge -->|"canonical transfer"| HomeBridge
+  SourceAMB -.->|"authenticated message"| HomeAMB
 ```
 
-If AMB arrives first, seed cash alone cannot authorize payment: the exact
-canonical processed marker must exist. If bridge execution arrives first, the
-claim still must come from the configured router through AMB. Native credit
-alone creates no user entitlement and does not drive execution.
+The two cross-chain paths can arrive in either order. AMB registers a claim; the
+canonical bridge establishes whether its exact transfer executed. Native xDAI can reach
+the vault later than that execution marker. A sponsor may supply cash for that gap, but
+sponsor cash alone never authorizes a payout.
 
-## Why an AMB request cannot invent an unfunded claim
+## What authorizes a payout
 
-The AMB channel authenticates **which contract sent the message**, rather than
-proving arbitrary Ethereum receipts. The immutable source router exposes only
-funded bridge entry points and replay of stored claims. A new claim is sent only
-after this same transaction:
-
-1. Transfers USDS from `msg.sender`, or redeems that caller's approved sUSDS into
-   USDS. The observed balance increase must equal the reported/input assets.
-   Pre-existing router USDS cannot be counted as this user's deposit.
-2. Relays exactly those assets to the fixed Gnosis vault, with exact router/bridge
-   token balance changes and exactly one foreign bridge nonce increment.
-3. Stores the payer, recipient, assets, original minimum and captured nonce, and
-   submits that payload to AMB. If AMB rejects it, the entire transaction reverts.
-
-There is no method that accepts an arbitrary nonce or message for forwarding.
-`resendClaim(id)` reads that original payload, so resending never bridges again
-and never changes the entitlement. Changing an AMB delivery ID has no effect on
-claim identity.
-
-On Gnosis, the caller must be the configured home AMB, its authenticated source
-sender must be this router and its source chain must be Ethereum. The vault
-then derives the ID itself and checks the processed marker for **this vault,
-this amount and this bridge nonce**. A signature count without its processed
-bit, another recipient's transfer, an above-limit transfer that has not executed,
-or an unrelated vault balance cannot replace that check.
-
-Claim identity is:
-
-```text
-keccak256(abi.encode(
-  keccak256("SDAI_AMB_VAULT_V1"), uint256(1), uint256(100),
-  sourceRouter, foreignBridge, homeBridge, vault, bridgeNonce
-))
-```
-
-The router records the actual Ethereum caller as `payer`. The default methods
-also set `recipient = payer`; the `To` methods let that payer intentionally send
-to another wallet. Gnosis settlement sends shares to the stored recipient, not
-to whoever calls `settle`. Thus no separate same-wallet proof is required.
-Contract wallets should explicitly choose their intended Gnosis address; equal
-addresses across chains do not establish equal ownership of different contracts.
-
-This guarantee assumes the configured AMB authenticates honestly and the
-canonical bridge's processed marker has its tested semantics. It does not
-withstand malicious bridge/AMB validators or governance. It is also not a
-trustless Ethereum light-client proof.
-The processed marker does not bind the payer or sDAI recipient; AMB authenticates
-those fields. Actual issuance of returned shares is trusted to the adapter and
-the savings protocol.
-
-## Claim and retry states
+The vault first stores a valid AMB claim as Pending. It may try to settle immediately.
+If that attempt fails, the claim stays Pending and anyone can retry it later.
 
 ```mermaid
-stateDiagram-v2
-  [*] --> Unknown
-  Unknown --> Pending: authenticated valid original Claim
-  Pending --> Pending: identical AMB resend
-  Pending --> Pending: waiting for exact bridge execution
-  Pending --> Pending: waiting for cash
-  Pending --> Pending: unsupported bridge configuration
-  Pending --> Pending: adapter revert / zero shares / minimum not met
-  Pending --> Pending: recipient lowers effective minimum
-  Pending --> Paid: processed + cash + successful conversion
-  Paid --> Paid: resend / settle by any caller
-  note right of Pending: Original payload remains immutable
-  note right of Paid: Permanent replay tombstone
+flowchart TD
+  Claim["Authenticated claim stored as Pending"] --> Ready{"Bridge configuration supported?<br/>Exact transfer processed?<br/>Enough xDAI?"}
+  Ready -- No --> Wait["Keep Pending; retry later"]
+  Ready -- Yes --> Convert{"Savings deposit succeeds<br/>and minimum shares met?"}
+  Convert -- No --> Wait
+  Convert -- Yes --> Paid["Paid once"]
 ```
 
-Registration saves the claim before attempting conversion in a bounded 350k
-gas self-call. It reserves 100k parent gas and allows for EIP-150 forwarding.
-A reverting or gas-exhausting child cannot erase successful registration.
-If the original AMB callback itself runs out of gas, registration is absent:
-permissionlessly resend the source's stored claim on Ethereum. This is message
-recovery, not another asset transfer.
+The exact transfer check uses the vault address, claim amount and bridge nonce. A
+validator signature count, a transfer to another address, or a large vault balance
+cannot replace the processed marker. After it exists, the vault may use sponsor cash
+before the bridge's native credit arrives. If cash is short, settlement does nothing
+until more arrives. If the adapter fails or returns too few shares, that attempt reverts
+without spending the claim's xDAI.
 
-The executor watches Gnosis registrations from the vault deployment block,
-persists a hash-checked cursor and pending IDs, and submits one claim per
-transaction. It persists the signed transaction/hash/nonce before broadcast;
-ambiguous broadcasts and restarts rebroadcast that same transaction. Disk or
-RPC failures retain work. Confirmation-based event replay handles cursor reorgs.
-The vault remains the payment authority even if the executor is incorrect.
+## Why the claim cannot be sent without a source deposit
 
-## What FCR changes, and what liquidity covers
+The Ethereum router creates a new claim only after it:
 
-[FCR](https://docs.gnosischain.com/bridges/fast-confirmation-rule) can shorten the
-Ethereum confirmation wait used by enabled bridge validators. It makes this
-one-user-transaction path more responsive and reduces the time capital sits
-between source acceptance and destination execution. It supplies neither an
-extra proof to the vault nor an atomic ordering guarantee between AMB and funds.
-The selected validator lanes' FCR configuration is still a rollout gate.
+1. Pulls the caller's USDS, or redeems the caller's approved sUSDS, and checks the USDS
+   it actually received. Old router balances cannot count as this deposit.
+2. Relays exactly that amount to the fixed vault address and checks the bridge nonce and
+   token balance changes.
+3. Stores the payer, recipient, amount, minimum shares and nonce, then sends that stored
+   claim through AMB.
 
-This v1 waits for canonical execution before advancing sponsor cash. The buffer
-covers the short gap between that execution marker and spendable native credit,
-and temporary cash imbalance between concurrent claims. It does not advance
-against a source transaction that has only been observed or against a timer.
+All three steps happen in one transaction. A source-side bridge limit, failed relay, or
+failed AMB submission reverts them together. A later resend sends only the stored
+message; it cannot move more funds, change the recipient or invent another bridge nonce.
 
-| Example | Vault action |
-| --- | --- |
-| 10 xDAI claim, 100 cash, no processed marker | Wait for bridge; pay nothing |
-| 10 xDAI claim, exact marker, 3 cash | Remain Pending; a settle call is a no-op |
-| Same claim after another 7 xDAI credit | Convert exactly 10 xDAI; mark Paid |
-| Same Paid claim delivered again | Keep Paid; pay nothing |
-| Exact marker and cash, adapter fails | Keep Pending and all cash; retry later |
+On Gnosis, the vault accepts registration only from its configured AMB when that AMB
+identifies the configured Ethereum router and source chain. The vault derives the claim
+ID from the router, both bridges, the vault and bridge nonce. The AMB delivery ID does
+not determine the entitlement. Identical messages preserve the original claim, any
+lowered minimum and the Paid state; a conflicting message is rejected.
 
-Cash is fungible; no partial payout or strict FIFO queue is imposed. Smaller
-ready claims may complete while a larger claim waits. Seed is a permanent
-sponsor donation in v1, with no withdrawal or LP accounting. Executor gas is
-funded in its own account, outside this cash pool.
+This protection depends on honest configured AMB and bridge infrastructure. The
+processed marker binds the vault, amount and nonce, **not** the payer or final sDAI
+recipient. AMB authenticates those fields from the router's message. The vault does not
+independently verify an Ethereum receipt. It also trusts the configured savings
+adapter's report of shares issued. See
+[security and ownership](AMB_VAULT_SECURITY.md) for the full trust boundary.
 
-## Implementation and rollout
+The router records the actual Ethereum caller as payer. Its default methods make that
+payer the Gnosis recipient; the “To” methods let the caller choose someone else. Whoever
+calls settlement cannot change the recipient or amount. Only the recorded recipient can
+lower the pending claim's minimum shares. A contract wallet at the same address on both
+chains may have different owners, so users must choose the Gnosis recipient
+deliberately.
 
-The [integration evidence](AMB_VAULT_INTEGRATION.md) pins the tested bridge
-implementations. Runtime implementation/code-hash, zero incoming fee manager
-and zero decimal shift checks fail closed. A legitimate canonical upgrade can
-freeze Pending claims, and today's zero fee getter cannot establish historical
-fees. Ethereum refund recovery and sponsor withdrawals are unsupported.
+## When something is delayed
 
-See [frontend integration](AMB_VAULT_FRONTEND.md) and
-[deployment and operations](AMB_VAULT_OPERATIONS.md) before activation. Tests and
-fork simulations support this implementation; live delivery ordering, validator
-FCR mode and production recovery policy still require explicit decisions and a
-separately authorized staging transfer.
+- **The source transaction fails:** The relay and claim both roll back. The user retains
+  the tokens or shares and may try again after the cause changes.
+- **The source succeeds but Gnosis shows Unknown:** AMB registration may be delayed or
+  may have failed. Anyone can call the source router's resendClaim with the stored claim
+  ID. This sends another message, not another deposit.
+- **The bridge transfer has not executed:** A destination-side limit or bridge delay
+  keeps the claim Pending, even if AMB arrived and sponsor cash is available. If the
+  transfer never executes, this version has no automatic refund.
+- **The claim is Pending:** Check bridge execution, cash, adapter behavior and the
+  recipient's minimum. The executor retries the same claim when conditions change. Paid
+  claims do nothing on replay.
+- **The bridge configuration changes:** Settlement stops if the current implementation,
+  fee manager or decimal shift is unsupported. A legitimate upgrade can strand a Pending
+  claim until a reviewed recovery path exists.
+
+The vault does not reserve cash per claim, pay partially, or enforce a strict queue. A
+smaller ready claim may settle while a larger one waits. Sponsor deposits are permanent
+donations: this version has no sponsor withdrawal, cancellation, timeout refund or
+application recovery contract. The executor pays its own transaction gas.
+
+## What FCR changes
+
+[Fast Confirmation Rule](https://docs.gnosischain.com/bridges/fast-confirmation-rule)
+may shorten the time bridge validators wait for Ethereum confirmation. It
+adds no proof to the vault and does not make AMB delivery, bridge execution and native
+credit simultaneous. This design advances cash only after the exact transfer's processed
+marker exists; it does not pay against an observed Ethereum transaction or a timer.
+
+Live validator settings, message-lane timing, native-credit ordering and recovery from
+bridge limits still need validation before use. The
+[operations guide](AMB_VAULT_OPERATIONS.md) covers those gates; the
+[integration evidence](AMB_VAULT_INTEGRATION.md) records what has actually been tested.
