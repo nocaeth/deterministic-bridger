@@ -11,6 +11,9 @@ evm_version = "cancun"
 auto_detect_remappings = false
 build_info = true
 
+[profile.amb_vault_fork]
+test = "test-fork"
+
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"
 gnosis = "${GNOSIS_RPC_URL}"
