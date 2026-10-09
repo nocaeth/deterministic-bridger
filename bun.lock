@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "sdai-deterministic-bridging-actions",
+      "name": "sdai-amb-vault",
       "dependencies": {
         "ethers": "^6.13.5",
       },

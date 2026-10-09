@@ -91,22 +91,30 @@ of the implemented contracts, executor and observed gas budgets.
 
 ## Local verification and review
 
-Final observed commands/results (2026-10-09):
+This branch verifies only the AMB vault protocol: source/vault unit checks,
+claim identity and a stateful conservation/at-most-once model. The pinned fork
+suite separately checks canonical bridge behavior, real adapter conversion,
+callback budgets and paired deployment dry-runs. Executor tests cover
+signed-before-broadcast restart, RPC ambiguity, confirmed nonce/receipt handling,
+event replay, disk errors and file/directory sync ordering.
 
-| Check | Result |
+Run `forge test`, `npm run test:vault-settler`, `npm run check:executor`,
+`forge build` and `forge fmt --check` locally. The separate fork command above
+requires archival access to both documented chain snapshots.
+
+Standalone-branch verification on 2026-10-09:
+
+| Check | Observed result |
 | --- | --- |
-| `forge test` after contract/review fixes | 77 passed; stateful 256 runs × 500 actions |
-| Final `FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=32 forge test` including two added source-failure cases | 79 passed; peak RSS 550,368 KiB |
-| `FOUNDRY_PROFILE=amb_vault_fork forge test -vv` with archival endpoints | 4 passed; pinned blocks above |
-| `npm run test:vault-settler` | 18 passed |
-| `npm run test:actions` | 11 passed |
-| `forge build`, `forge fmt --check`, `node --check script/vault-settler.mjs`, `git diff --check` | Passed |
+| `forge build --force` | Passed; stale artifacts cleared |
+| `FOUNDRY_PROFILE=amb_vault_fork forge build` | Passed; fork fixtures compile independently |
+| `forge test` | 36 passed, 0 failed; stateful model 256 runs × 500 actions |
+| `npm run test:vault-settler` | 18 passed, 0 failed |
+| `npm run check:executor`, `forge fmt --check`, `git diff --check` | Passed |
 
-The full Foundry suite covers the existing deterministic route plus source/vault
-unit checks and a stateful conservation/at-most-once model (256 runs, 500 actions
-each). Executor tests cover signed-before-broadcast restart, RPC ambiguity,
-confirmed nonce/receipt handling, event replay, disk errors and file/directory
-sync ordering. Existing Action tests remain unchanged.
+Source imports, documentation links and package/lock metadata were checked after
+branch isolation. The pinned live fork results above remain the prior observed
+results; live fork execution was not repeated for the removal-only cleanup.
 
 A fresh whole-branch review found no Critical contract issue and identified
 checkpoint-directory durability, stalled-transaction diagnostics, a minimum event

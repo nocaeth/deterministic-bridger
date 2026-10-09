@@ -1,7 +1,7 @@
 # FCR, AMB and a shared sDAI settlement vault
 
-Date: 2026-10-09. Status: proposed design, with deployment evidence gates.
-Branch: `codex/fcr-amb-vault-plan`. Planning base: `dbd7935`.
+Date: 2026-10-09. Status: implemented, with production deployment evidence gates.
+Branch: `codex/fcr-amb-vault-plan`.
 
 ## Outcome and constraints
 
@@ -10,10 +10,8 @@ approval, and receive Gnosis sDAI without browser registration or polling to dri
 execution. Preserve a distinct payer and recipient. Leave the canonical xDai
 bridge and AMB contracts unchanged.
 
-Replace the per-recipient receiver/factory path for new deposits with an immutable
-Ethereum router, an immutable Gnosis vault, authenticated AMB claims and a small
-fallback executor. Existing deployments, their pending deposits and their
-automation continue to work during migration.
+The application consists of an immutable Ethereum router, an immutable Gnosis
+vault, authenticated AMB claims and a small fallback executor.
 
 FCR reduces source confirmation latency. It does not make the two bridges atomic,
 provide a native-mint callback, guarantee a maximum delivery time, or remove the
@@ -26,8 +24,6 @@ Global implementation constraints:
 - Solidity `^0.8.35`; Foundry `solc_version = "0.8.35"`; EVM target `cancun`.
 - Use the existing `SafeERC20`, asset constants, adapter interface, Foundry and
   installed ethers 6 dependency. Add no package dependency.
-- Do not change or remove the existing deterministic router, receivers, factory,
-  tests, deployment scripts or Tenderly Action as part of the new protocol.
 - No arbitrary AMB forwarding, caller-supplied bridge nonce, payout override,
   delegatecall, upgrade mechanism, admin sweep or timeout refund.
 - A claim can release value only after its authenticated source transaction and
@@ -38,23 +34,17 @@ Global implementation constraints:
 
 ## Why this architecture
 
-Three options were considered:
-
-| Option | Advantage | Cost |
-| --- | --- | --- |
-| Current CREATE2 receivers plus a durable keeper | Least contract change; funds stay isolated | Per-recipient contracts and a keeper on every deposit |
-| Shared vault paying on AMB receipt alone | Earliest possible advance; no receivers | Finances transfers still blocked by destination limits |
-| Shared vault with AMB authorization and canonical execution gate | No receivers; advance limited to mint scheduling/credit gap | Extra AMB path; ordering and recovery still need an executor |
-
-Select the third option. In particular, do not pay just because the router's AMB
-message has arrived. The shared vault's balance alone is also insufficient to
+The shared vault combines AMB authorization with the canonical execution gate.
+Liquidity advances cover only the mint scheduling/credit gap; independent message
+and asset delivery still need an executor. Do not pay just because the router's
+AMB message has arrived. The shared vault's balance alone is also insufficient to
 authorize a claim: it may contain seed liquidity or unrelated deposits.
 
 ## Observed evidence and what remains unverified
 
-The local router currently supports USDS and ERC-4626 redemption of sUSDS. Its
-bridge call uses USDS. There is no direct canonical sUSDS bridge call: the new
-design must retain `sUSDS redemption -> USDS relay`.
+The router supports USDS and ERC-4626 redemption of sUSDS. Its bridge call uses
+USDS. There is no direct canonical sUSDS bridge call: the asset path is
+`sUSDS redemption -> USDS relay`.
 
 Public source reviewed on this date supports the following proposed integration:
 
@@ -198,9 +188,9 @@ resendClaim(bytes32 claimId) returns (bytes32 ambMessageId);
 getClaim(bytes32 claimId) view returns (VaultClaimLib.Claim memory);
 ```
 
-Caller-default variants set recipient to `msg.sender`; `To` variants preserve the
-existing separate recipient semantics. These are new ABIs on a new deployment.
-Do not pretend they are drop-in replacements for the existing router's selectors.
+Caller-default variants set recipient to `msg.sender`; `To` variants allow the
+payer to specify a separate recipient. Use these exact ABIs for the application
+deployment.
 
 New Gnosis contract: `SavingsXDaiSettlementVault`.
 
@@ -387,14 +377,14 @@ adjustment. Explain that smart-contract wallets may have different identities or
 control on the two chains; equality of address strings alone is not a control
 proof. Browser observation never drives or authorizes normal execution.
 
-## Recovery and migration
+## Recovery and deployment
 
 Do not refund based on timeout. The bridge can deliver later, while a vault claim
 could already have paid. Canonical above-limit recovery is a separate privileged
 bridge procedure. Because the canonical destination is the shared vault, an
 Ethereum-side recovery may name that same address on Ethereum, not the original
 payer. Do not assume there is a controlled contract at that address or that the
-existing router can recover those tokens.
+source router can recover those tokens.
 
 Before production, either prove the selected operational recovery preserves
 delivery to the Gnosis vault, or design and review control of the Ethereum recovery
@@ -411,11 +401,9 @@ and verify all reciprocal configuration before funding or frontend activation.
 Nonce drift requires a corrected deployment; never fix it with an arbitrary
 initializer or mutable trust anchor.
 
-Deploy and verify new contracts separately. Retain original deterministic route
-and its automation for all legacy deposits. Route new traffic only after the
+Deploy and verify the router and vault. Activate traffic only after the
 integration gates, measured gas budgets, ordering checks, executor restart checks,
-security review and explicit production authorization. Do not remove or sweep
-legacy receivers or redirect an existing Tenderly Action to the new vault.
+security review and explicit production authorization.
 
 ## Required validation
 
@@ -440,8 +428,8 @@ EVM forks cannot alone establish consensus-native mint behavior.
 
 Executor tests cover restart/reorg reconstruction, stale state, duplicate events,
 paid claims, isolated adapter errors, lost receipts and serialized submissions.
-Measure callback gas with the real adapter; then run the complete existing suite
-to ensure the legacy route remains usable. Before any builds/forks/bulk replay,
+Measure callback gas with the real adapter, then run the full vault protocol and
+executor suites. Before any builds/forks/bulk replay,
 read `~/.codex/policies/memory.md` and apply its resource limits.
 
 ## Acceptance criteria

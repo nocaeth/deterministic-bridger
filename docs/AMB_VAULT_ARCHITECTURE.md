@@ -6,8 +6,8 @@ claim atomically. A shared Gnosis vault converts the corresponding xDAI into
 sDAI for the authenticated recipient. A Gnosis executor completes pending work;
 the user normally needs no Gnosis transaction or separate claim signature.
 
-The original deterministic receiver route remains available. This route needs
-no change to either bridge. No new-route contracts have been deployed.
+This architecture needs no change to either bridge. The router and settlement
+vault have not been deployed.
 
 ## Architecture
 

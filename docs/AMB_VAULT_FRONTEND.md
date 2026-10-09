@@ -1,9 +1,8 @@
 # Frontend integration for the AMB vault route
 
 This repository contains contracts and the executor, not a frontend application.
-Use the new `MainnetAmbBridgeRouter` and `SavingsXDaiSettlementVault` ABIs in
-`out/` after `forge build`. Configure verified deployments as a reciprocal pair;
-do not substitute the legacy router/factory addresses.
+Use the `MainnetAmbBridgeRouter` and `SavingsXDaiSettlementVault` ABIs in `out/`
+after `forge build`. Configure verified deployments as a reciprocal pair.
 
 ## Ethereum wallet interaction
 

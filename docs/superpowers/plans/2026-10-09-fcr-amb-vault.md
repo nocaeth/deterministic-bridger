@@ -20,8 +20,6 @@ Node.js and installed ethers 6. No new dependency.
 - Solidity `^0.8.35`; Foundry `solc_version = "0.8.35"`; EVM target `cancun`.
 - Use the existing `SafeERC20`, asset constants, adapter interface, Foundry and
   installed ethers 6 dependency. Add no package dependency.
-- Do not change or remove the existing deterministic router, receivers, factory,
-  tests, deployment scripts or Tenderly Action as part of the new protocol.
 - No arbitrary AMB forwarding, caller-supplied bridge nonce, payout override,
   delegatecall, upgrade mechanism, admin sweep or timeout refund.
 - A claim can release value only after its authenticated source transaction and
@@ -37,8 +35,8 @@ keys, RPC URLs with credentials, or secret environment contents.
 
 ## Review focus
 
-1. A source claim accidentally includes old router USDS rather than this payer's
-   funding: delta-based assertions belong to Task 2.
+1. A source claim accidentally includes pre-existing router USDS rather than
+   this payer's funding: delta-based assertions belong to Task 2.
 2. A new AMB message ID, different claim fields or a resend after minimum lowering
    creates a second entitlement: identity and duplicate tests belong to Task 3.
 3. A signature threshold or above-limit record is confused with actual bridge
@@ -60,17 +58,17 @@ keys, RPC URLs with credentials, or secret environment contents.
 | `src/MainnetAmbBridgeRouter.sol` | Caller funding, atomic relay/claim and immutable-payload resend |
 | `src/SavingsXDaiSettlementVault.sol` | Durable claims, canonical gate, payment and recipient minimum |
 | `test/mocks/MockAMB.sol`, `MockNonceXDaiBridge.sol`, `MockHomeXDaiBridge.sol` | Separate message, relay and execution fixtures |
-| `test/mocks/MockVaultAdapter.sol` | Shares, revert, gas and reentrancy behavior without altering MockAdapter |
+| `test/mocks/MockVaultAdapter.sol` | Shares, revert, gas and reentrancy behavior |
 | `test/VaultClaimLib.t.sol`, `test/AmbVaultFixture.sol` | Standalone protocol checks and later combined fixture |
 | `test/MainnetAmbBridgeRouter.t.sol`, `SavingsXDaiSettlementVault.t.sol` | Router/vault checks |
-| `test/AmbVaultInvariant.t.sol`, `AmbVaultFork.t.sol` | State invariants and required-RPC integration checks |
+| `test/AmbVaultInvariant.t.sol`, `test-fork/AmbVaultFork.t.sol` | State invariants and required-RPC integration checks |
 | `script/vault-settler.mjs`, `script/test/vault-settler.test.mjs` | Executor and bounded recovery tests |
 | `script/DeployAmbVault.s.sol`, `DeployAmbRouter.s.sol` | New deployment sequence and reciprocal configuration |
 | `docs/AMB_VAULT_FRONTEND.md`, `docs/AMB_VAULT_OPERATIONS.md` | New ABI/status/operations documentation |
 | `.env.example`, `package.json`, `README.md` | Names of new configuration, a new test command and route links |
 
-Existing src/tests/scripts/actions keep their current behavior. In the shared
-configuration/documentation files, add new-route entries only.
+This branch contains the AMB vault protocol, executor, fixtures, deployment
+scripts and documentation only.
 
 ## Task 1: Pin bridge semantics and define the shared protocol
 
@@ -125,8 +123,8 @@ domain/chain/address ordering. Do not derive identity from an AMB delivery ID.
   Fill integration evidence with actual public values and pinned source revisions.
   Exclude all credentials. If a field cannot be established, mark that production
   gate unverified with its specific required observation.
-- [x] Write a required-RPC fork test using `vm.envString` for both URLs, unlike the
-  legacy optional smoke tests. Assert canonical token compatibility, getters,
+- [x] Write a required-RPC fork test using `vm.envString` for both URLs. Assert
+  canonical token compatibility, getters,
   supported implementation, decimalShift=0 and feeManagerContract=0. This version
   intentionally supports no fee manager; a zero-rate nonzero manager needs a
   separately reviewed policy. Verify source relay logs' actual nonce against the
@@ -187,7 +185,7 @@ getClaim(bytes32 claimId) view returns (VaultClaimLib.Claim memory);
 - [x] Write source tests for both assets and both recipient variants. For sUSDS,
   check the caller's shares burn, observed USDS assets match the claim, bridge
   destination is the configured vault, nonce matches the bridge event and allowance
-  finishes at zero. Fund old router USDS separately and prove it is excluded.
+  finishes at zero. Fund pre-existing router USDS separately and prove it is excluded.
   A representative assertion cycle is:
 
   ```solidity
@@ -350,7 +348,7 @@ copied from the contract under test.
 ## Task 5: Add the durable Gnosis completion executor
 
 **Files:** Create vault-settler.mjs and its Node tests; add `test:vault-settler` to
-package.json. Do not alter script/watchtower.mjs or actions/receiverQueue.js.
+package.json.
 
 **Consumes:** ClaimRegistered/ClaimPaid logs, vault deployment block, getClaim,
 settlementStatus and settle. No mainnet log scan is needed for registered claims.
@@ -397,7 +395,7 @@ VAULT_SETTLER_STATE_PATH; validate poll/range/backoff as bounded positive values
 to .env.example/README, and the integration evidence update.
 
 **Consumes:** New contract ABIs/configuration, verified integration fields and new
-executor. Default legacy deployment commands retain their existing behavior.
+executor.
 
 **Produces:** Dry-run deployment/configuration checks, complete frontend field/event
 mapping and an operations checklist with explicit production authorization required.
@@ -442,10 +440,9 @@ mapping and an operations checklist with explicit production authorization requi
   small staging transfer must observe actual reward mint timing, callback absence,
   message ordering, executor completion and restart recovery. Record source/dest
   block numbers, tx hashes, amounts and resulting shares without exposing keys.
-- [x] Run `forge fmt --check`, the full `forge test`, `forge build`, existing
-  `npm run test:actions`, and new `npm run test:vault-settler` within policy budgets.
-  Fork verification must use the required-RPC new suite; unset legacy optional
-  tests are not recorded as live passes. Review the whole change for authorization,
+- [x] Run `forge fmt --check`, the full `forge test`, `forge build` and
+  `npm run test:vault-settler` within policy budgets. Fork verification must use
+  the required-RPC suite; missing RPC configuration is a failed check. Review the whole change for authorization,
   replay, cash/fee accounting and recovery before proposing production activation.
 - [x] Commit scripts/docs/config. Present evidence, outstanding gates and a
   concrete deployment/traffic-change proposal for explicit authorization.
@@ -460,7 +457,6 @@ uncompleted checklist items retain production decisions/staging observations;
 dry-run scripts and local/fork ordering checks already passed. Live FCR lanes,
 consensus mint timing, and production recovery acceptance remain unverified.
 
-Production readiness requires the listed tests with observed results, continued
-availability of the deterministic flow and satisfaction of deployment evidence
-gates. The locally verified implementation is not production activation. A compatible protocol implementation does not itself authorize a
+Production readiness requires the listed tests with observed results and
+satisfaction of deployment evidence gates. The locally verified implementation is not production activation. A compatible protocol implementation does not itself authorize a
 production deployment, irreversible buffer donation or migration of users.

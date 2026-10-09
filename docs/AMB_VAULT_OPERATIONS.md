@@ -1,8 +1,8 @@
 # AMB vault deployment and operations
 
 Implementation and fork verification do not authorize production deployment,
-seed funding or changing traffic. The new route has **no deployed address**.
-The old route's deployment scripts and automation keep their existing meaning.
+seed funding or changing traffic. The application contracts have **no deployed
+address**.
 
 ## Reciprocal deployment
 
