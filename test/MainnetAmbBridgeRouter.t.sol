@@ -145,6 +145,32 @@ contract MainnetAmbBridgeRouterTest is Test {
         router.resendClaim(bytes32(uint256(99)));
     }
 
+    function testRedemptionFailureNeverRelaysOrSendsClaim() external {
+        _fundSavings(5 ether);
+        vm.prank(payer);
+        susds.approve(address(router), 1 ether);
+        vm.expectRevert();
+        vm.prank(payer);
+        router.bridgeSavingsUSDS(5 ether, 0);
+        assertEq(susds.balanceOf(payer), 5 ether);
+        assertEq(susds.allowance(payer, address(router)), 1 ether);
+        assertEq(foreign.nonce(), 0);
+        assertEq(amb.submissions(), 0);
+    }
+
+    function testReportedUsdsTransferWithoutFundingCannotUseExistingRouterCash() external {
+        usds.mint(address(router), 10 ether);
+        vm.mockCall(
+            address(usds), abi.encodeWithSelector(usds.transferFrom.selector), abi.encode(true)
+        );
+        vm.expectRevert(MainnetAmbBridgeRouter.FundingMismatch.selector);
+        vm.prank(payer);
+        router.bridge(5 ether, 0);
+        assertEq(usds.balanceOf(address(router)), 10 ether);
+        assertEq(foreign.nonce(), 0);
+        assertEq(amb.submissions(), 0);
+    }
+
     function testWrongRedemptionReturnCannotUseExistingBalance() external {
         _fundSavings(5 ether);
         usds.mint(address(router), 10 ether);

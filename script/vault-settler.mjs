@@ -1,4 +1,4 @@
-import { open, readFile, rename, mkdir } from 'node:fs/promises';
+import { open, readFile, rename } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Contract, Interface, JsonRpcProvider, Wallet, isAddress, keccak256 } from 'ethers';
@@ -34,12 +34,18 @@ export async function loadCheckpoint(path, scope) {
   return state;
 }
 
-export async function saveCheckpoint(path, state) {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const file = await open(path + '.tmp', 'w', 0o600);
+export async function saveCheckpoint(path, state, io = { open, rename }) {
+  // The operator supplies an existing persistent directory; do not create unsynced ancestors.
+  const file = await io.open(path + '.tmp', 'w', 0o600);
   try { await file.chmod(0o600); await file.writeFile(JSON.stringify(state)); await file.sync(); }
   finally { await file.close(); }
-  await rename(path + '.tmp', path);
+  await io.rename(path + '.tmp', path);
+  const directory = await io.open(dirname(path), 'r');
+  try { await directory.sync(); } finally { await directory.close(); }
+}
+
+function report(ctx, category, id, entry) {
+  ctx.report?.({ category, claimId: id, txHash: entry.submitted?.hash, nonce: entry.submitted?.nonce });
 }
 
 function defer(ctx, entry) {
@@ -86,12 +92,13 @@ export async function reconcileClaims(ctx) {
       if ((receipt && receipt.blockNumber <= ctx.confirmedBlock)
           || await provider.getTransactionCount(ctx.signerAddress, ctx.confirmedBlock) > tx.nonce) {
         delete entry.submitted;
-        if (receipt?.status === 0) defer(ctx, entry);
+        if (receipt?.status === 0) { report(ctx, 'settlement_reverted', id, { submitted: tx }); defer(ctx, entry); }
         else entry.nextAttemptAt = 0;
       } else {
-        try { await provider.broadcastTransaction(tx.rawTx); } catch { /* Same signed transaction is safe to retry. */ }
+        try { await provider.broadcastTransaction(tx.rawTx); } catch { report(ctx, 'broadcast_failed', id, entry); }
+        report(ctx, 'submission_unresolved', id, entry);
       }
-    } catch { /* Keep the nonce and hash until RPC evidence is available. */ }
+    } catch { report(ctx, 'receipt_or_nonce_read_failed', id, entry); }
     if (entry.submitted) return;
   }
   let checked = 0;
@@ -102,7 +109,7 @@ export async function reconcileClaims(ctx) {
       const status = Number(await ctx.vault.settlementStatus(id, { blockTag: state.cursorBlock }));
       if (status === 0 || status === 1) delete state.pending[id];
       else if (status !== 5) defer(ctx, entry);
-    } catch { defer(ctx, entry); }
+    } catch { report(ctx, 'status_read_failed', id, entry); defer(ctx, entry); }
   }
 }
 
@@ -116,13 +123,14 @@ export async function settleReadyClaims(ctx) {
     try {
       if (Number(await ctx.vault.settlementStatus(id)) !== 5) { defer(ctx, entry); continue; }
       submitted = await ctx.prepare(id);
-    } catch { defer(ctx, entry); continue; }
+    } catch { report(ctx, 'prepare_failed', id, entry); defer(ctx, entry); continue; }
     // Persist the signed hash and nonce BEFORE broadcast, eliminating the lost-response window.
     const checkpoint = structuredClone(ctx.state);
     checkpoint.pending[id].submitted = submitted;
     await saveCheckpoint(ctx.path, checkpoint);
     entry.submitted = submitted;
-    try { await ctx.provider.broadcastTransaction(entry.submitted.rawTx); } catch {}
+    try { await ctx.provider.broadcastTransaction(entry.submitted.rawTx); }
+    catch { report(ctx, 'broadcast_failed', id, entry); }
     return;
   }
 }
@@ -152,9 +160,12 @@ async function main() {
   const signer = new Wallet(process.env.VAULT_SETTLER_PRIVATE_KEY, provider);
   const vault = new Contract(vaultAddress, VAULT_ABI, signer);
   const path = resolve(process.env.VAULT_SETTLER_STATE_PATH || `.tmp/vault-settler-100-${vaultAddress.toLowerCase()}.json`);
+  const directory = await open(dirname(path), 'r');
+  try { await directory.sync(); } finally { await directory.close(); }
   const state = await loadCheckpoint(path, { chainId: 100, vault: vaultAddress, deploymentBlock });
   const ctx = {
     state, path, provider, vault, signerAddress: signer.address, now: Date.now,
+    report: diagnostic => console.warn(`vault-settler ${JSON.stringify(diagnostic)}`),
     range: bounded('VAULT_SETTLER_RANGE', 2000, 10000),
     confirmations: bounded('VAULT_SETTLER_CONFIRMATIONS', 2, 100),
     batchSize: bounded('VAULT_SETTLER_BATCH_SIZE', 25, 100),

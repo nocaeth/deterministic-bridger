@@ -4,8 +4,80 @@ pragma solidity ^0.8.35;
 import { AmbVaultFixture } from "./AmbVaultFixture.sol";
 import { SavingsXDaiSettlementVault as Vault } from "../src/SavingsXDaiSettlementVault.sol";
 import { VaultClaimLib } from "../src/libraries/VaultClaimLib.sol";
+import { IAMBClaimReceiver } from "../src/interfaces/IAMB.sol";
 
 contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
+    event MinimumSharesLowered(bytes32 indexed claimId, uint256 newMinimum);
+
+    function testMinimumChangeEventMatchesPublishedAbi() external {
+        bytes32 id = _bridgeUSDS(5 ether, 10 ether);
+        _deliver(id);
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit MinimumSharesLowered(id, 4 ether);
+        vm.prank(recipient);
+        vault.lowerMinShares(id, 4 ether);
+    }
+
+    function testDistinctAmbDeliveryIdsCannotRepeatPayout() external {
+        bytes32 id = _bridgeUSDS(5 ether, 0);
+        _execute(id);
+        _credit(10 ether);
+        _deliver(id);
+        _deliver(id);
+        _deliver(id);
+        assertEq(adapter.callCount(), 1);
+        assertEq(address(vault).balance, 5 ether);
+    }
+
+    function testSettlementRejectsReentryIntoOtherClaimAndMinimumMutation() external {
+        bytes32 first = _bridgeUSDS(5 ether, 0);
+        recipient = address(adapter);
+        bytes32 second = _bridgeUSDS(6 ether, 0);
+        bytes32 third = _bridgeUSDS(7 ether, 8 ether);
+        _execute(first);
+        _execute(second);
+        _deliver(first);
+        _deliver(second);
+        _deliver(third);
+        _credit(20 ether);
+        adapter.setReentry(address(vault), abi.encodeCall(vault.settle, (second)));
+        vault.settle(first);
+        assertFalse(adapter.reentrySucceeded());
+        _pending(second);
+        adapter.setReentry(address(vault), abi.encodeCall(vault.lowerMinShares, (third, 0)));
+        vault.settle(second);
+        assertFalse(adapter.reentrySucceeded());
+        (,, uint256 minimum) = vault.getClaim(third);
+        assertEq(minimum, 8 ether);
+        assertEq(adapter.callCount(), 2);
+    }
+
+    function testSettlementRejectsAuthenticatedRegistrationReentry() external {
+        bytes32 first = _bridgeUSDS(5 ether, 0);
+        bytes32 second = _bridgeUSDS(6 ether, 0);
+        _execute(first);
+        _execute(second);
+        _deliver(first);
+        _credit(20 ether);
+        bytes memory registration =
+            abi.encodeCall(IAMBClaimReceiver.registerClaim, (router.getClaim(second)));
+        adapter.setReentry(
+            address(amb),
+            abi.encodeWithSelector(
+                amb.deliver.selector,
+                address(vault),
+                address(router),
+                uint256(1),
+                registration,
+                uint256(700_000)
+            )
+        );
+        vault.settle(first);
+        assertEq(uint256(vault.settlementStatus(second)), uint256(Vault.SettlementResult.Unknown));
+        assertTrue(_deliver(second));
+        assertEq(adapter.callCount(), 2);
+    }
+
     function _pending(bytes32 id) private view {
         (, Vault.ClaimStatus status,) = vault.getClaim(id);
         assertEq(uint256(status), uint256(Vault.ClaimStatus.Pending));

@@ -59,7 +59,7 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
     event ClaimPaid(
         bytes32 indexed claimId, address indexed recipient, uint256 amount, uint256 shares
     );
-    event MinSharesLowered(bytes32 indexed claimId, uint256 oldMinimum, uint256 newMinimum);
+    event MinimumSharesLowered(bytes32 indexed claimId, uint256 minimumShares);
     event SettlementAttemptFailed(bytes32 indexed claimId);
 
     constructor(
@@ -210,7 +210,7 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
         ) {
             revert InvalidMinimum();
         }
-        emit MinSharesLowered(id, c.minimumShares, newMinimum);
+        emit MinimumSharesLowered(id, newMinimum);
         c.minimumShares = newMinimum;
     }
 }

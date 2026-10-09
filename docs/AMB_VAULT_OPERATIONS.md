@@ -61,11 +61,19 @@ Run with environment supplied securely, for example
 `node --env-file=.env script/vault-settler.mjs` on Node with env-file support.
 Use private persistent storage for the checkpoint; `.tmp` is a development
 default, not a reliable volume after a deployment/container replacement.
+Provision its persistent parent directory before starting the process. The
+executor requires that existing directory and directory-fsync support; it
+does not create a tree of directories whose durability it cannot establish.
 
 The checkpoint records the scope, scanned block hash/cursor, pending IDs,
 backoff, and any signed raw transaction/hash/nonce. It stores no private key or
 RPC error text; mode is 0600. Signed transactions can be broadcast by anyone
-with the checkpoint, so keep backups private. Writes use fsync and rename.
+with the checkpoint, so keep backups private. Writes sync the file, rename it,
+then sync its directory before broadcasting. Fixed-category diagnostics report
+claim ID, transaction hash/nonce and unresolved submissions without RPC messages
+or secrets. Investigate `broadcast_failed`, `submission_unresolved`,
+`settlement_reverted`, `prepare_failed` and read-failure categories; nonce stalls
+remain operator-action conditions.
 Paid/Unknown reconciliation is anchored to the scanned block; a cursor reorg
 resets discovery to the deployment block. Work is replayed in bounded ranges.
 

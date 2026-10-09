@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { Interface } from 'ethers';
 import { VAULT_ABI, loadCheckpoint, saveCheckpoint, runOnce, settleReadyClaims } from '../vault-settler.mjs';
 
@@ -115,4 +117,38 @@ test('disk failure cannot leave an unpersisted transaction eligible for broadcas
   await writeFile(c.path, 'blocked'); c.path = join(c.path, 'state.json');
   await assert.rejects(settleReadyClaims(c));
   assert.equal(c.broadcasts, 0); assert.ok(!c.state.pending[id].submitted);
+});
+test('checkpoint success requires file and directory durability before broadcast', async t => {
+  const c = await fixture(t); const trace = [];
+  const io = {
+    open: async path => ({
+      chmod: async () => {}, writeFile: async () => trace.push('write'),
+      sync: async () => trace.push(path.endsWith('.tmp') ? 'file_sync' : 'directory_sync'),
+      close: async () => {},
+    }),
+    rename: async () => trace.push('rename'),
+  };
+  await saveCheckpoint(c.path, c.state, io); trace.push('broadcast');
+  assert.deepEqual(trace, ['write', 'file_sync', 'rename', 'directory_sync', 'broadcast']);
+});
+test('persistent broadcast failure reports only safe diagnostic fields and recovers', async t => {
+  const c = await fixture(t); const reports = []; c.report = report => reports.push(report);
+  c.vault.settlementStatus = async () => 5n;
+  c.provider.broadcastTransaction = async () => { throw new Error('secret-rpc-password'); };
+  await runOnce(c); await runOnce(c);
+  assert.ok(reports.some(r => r.category === 'broadcast_failed' && r.claimId === id && r.txHash === hash && r.nonce === 0));
+  assert.ok(reports.some(r => r.category === 'submission_unresolved'));
+  assert.ok(!JSON.stringify(reports).includes('secret-rpc-password'));
+  c.provider.getTransactionReceipt = async () => ({ status: 1, blockNumber: 10 });
+  c.vault.settlementStatus = async () => 1n; await runOnce(c);
+  assert.equal(Object.keys(c.state.pending).length, 0);
+});
+test('CLI exits with sanitized output when startup RPC is unavailable', async () => {
+  const script = fileURLToPath(new URL('../vault-settler.mjs', import.meta.url));
+  const result = await new Promise(resolve => execFile(process.execPath, [script], {
+    timeout: 3000, env: { ...process.env, GNOSIS_RPC_URL: 'http://127.0.0.1:1', AMB_VAULT: vaultAddress,
+      AMB_VAULT_DEPLOYMENT_BLOCK: '10', VAULT_SETTLER_PRIVATE_KEY: '0x' + '01'.repeat(32) },
+  }, (error, stdout, stderr) => resolve({ error, stdout, stderr })));
+  assert.equal(result.error?.code, 1); assert.ok(!result.error?.killed);
+  assert.ok(!result.stdout.includes('127.0.0.1')); assert.ok(!result.stderr.includes('127.0.0.1'));
 });

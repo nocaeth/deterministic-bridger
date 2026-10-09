@@ -55,7 +55,8 @@ registration attempts catch failures and keep the claim.
 
 Display original and effective minimum separately. Only the recorded recipient
 can call `lowerMinShares(id, newMinimum)` on Gnosis while Pending, with
-`newMinimum <= currentMinimum`. Do not imply that this refunds or changes the
+`newMinimum <= currentMinimum`. It emits `MinimumSharesLowered(id, minimumShares)`.
+Do not imply that this refunds or changes the
 bridge transfer. Resending the original Claim preserves the lowered minimum.
 
 Any Gnosis wallet can call `settle(id)` for a registered claim. It cannot choose

@@ -43,15 +43,15 @@ a mock AMB wrapper and a simulated execution marker:
 
 | Path | Observed gas, including mock AMB wrapper |
 | --- | ---: |
-| Fresh ready registration and conversion | 358,521 |
-| Duplicate Paid registration | 68,174 |
-| Registration with failed destination minimum | 311,142 |
+| Fresh ready registration and conversion | 380,713 |
+| Duplicate Paid registration | 68,466 |
+| Registration with failed destination minimum | 311,434 |
 
 The 700k callback and 350k isolated child completed the real conversion in the
 fork. Local gas-exhaustion tests also preserve Pending registration. These are
 setup-sensitive fork measurements, not live AMB or native consensus-mint
 measurements. Keep staging gas headroom as a production gate. Final fork peak RSS
-was 266,444 KiB. Configured non-archive endpoints became unavailable for new reads
+was 513,464 KiB including compilation. Configured non-archive endpoints became unavailable for new reads
 at the pinned blocks; final checks used public Ethereum dRPC and the official
 Gnosis RPC instead, with the same snapshot and code-hash assertions.
 
@@ -88,3 +88,29 @@ upgradeability and validator assumptions remain part of application trust.
 
 Production activation remains gated on these product/trust decisions and a review
 of the implemented contracts, executor and observed gas budgets.
+
+## Local verification and review
+
+Final observed commands/results (2026-10-09):
+
+| Check | Result |
+| --- | --- |
+| `forge test` after contract/review fixes | 77 passed; stateful 256 runs × 500 actions |
+| Final `FOUNDRY_INVARIANT_RUNS=64 FOUNDRY_INVARIANT_DEPTH=32 forge test` including two added source-failure cases | 79 passed; peak RSS 550,368 KiB |
+| `FOUNDRY_PROFILE=amb_vault_fork forge test -vv` with archival endpoints | 4 passed; pinned blocks above |
+| `npm run test:vault-settler` | 18 passed |
+| `npm run test:actions` | 11 passed |
+| `forge build`, `forge fmt --check`, `node --check script/vault-settler.mjs`, `git diff --check` | Passed |
+
+The full Foundry suite covers the existing deterministic route plus source/vault
+unit checks and a stateful conservation/at-most-once model (256 runs, 500 actions
+each). Executor tests cover signed-before-broadcast restart, RPC ambiguity,
+confirmed nonce/receipt handling, event replay, disk errors and file/directory
+sync ordering. Existing Action tests remain unchanged.
+
+A fresh whole-branch review found no Critical contract issue and identified
+checkpoint-directory durability, stalled-transaction diagnostics, a minimum event
+ABI mismatch and missing reentry/replay cases. These were corrected with
+regression checks. The real above-limit path is supported by linked bridge source
+and local gate tests; it is **not** specifically exercised in the pinned fork.
+This is an implementation review, not a production security audit.

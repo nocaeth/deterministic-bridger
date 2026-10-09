@@ -10,6 +10,7 @@ contract MockAMB {
     uint256 public destinationChainId;
     bool public rejectSubmission;
     uint256 public submissions;
+    uint256 public deliveries;
     bytes public lastData;
     address public lastTarget;
 
@@ -41,7 +42,7 @@ contract MockAMB {
     ) external returns (bool success, bytes memory result) {
         messageSender = sender;
         messageSourceChainId = chain;
-        messageId = bytes32(uint256(1));
+        messageId = bytes32(++deliveries);
         (success, result) = target.call{ gas: gasLimit }(data);
         messageSender = address(0);
         messageSourceChainId = 0;
