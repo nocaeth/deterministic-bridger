@@ -1,239 +1,96 @@
-# Deterministic Bridger
+# USDS to sDAI through an AMB settlement router
 
-Deterministic Bridger routes mainnet USDS through the canonical xDai bridge to a
-counterfactual Gnosis receiver, then converts the bridged xDAI into sDAI for the
-intended deterministic receiver. Users can also submit sUSDS; the router redeems
-it to USDS on Ethereum before bridging.
+This repository contains a new Ethereum-to-Gnosis savings route. A user approves USDS or
+sUSDS, then makes one Ethereum deposit transaction. The router redeems sUSDS when needed
+and sends USDS through the existing xDAI bridge. In that transaction, it also submits a
+claim to AMB. Either source call failing reverts the deposit; delivery on Gnosis happens
+later.
 
-The core idea is that the mainnet router and Gnosis factory share the same
-`CREATE2` address derivation. A user can know the Gnosis receiver before the
-receiver contract exists, bridge USDS or redeem-and-bridge sUSDS to that address,
-and let any executor deploy and convert the receiver after xDAI arrives.
+On Gnosis, a shared settlement router waits for that exact bridge transfer to execute and for enough
+xDAI to be available. It can briefly hold pooled xDAI while claims wait; it does not
+issue deposit shares or require a sponsor buffer. It then deposits the claim amount into savings for the chosen
+recipient. A separate executor retries delayed claims. The user normally makes no Gnosis
+transaction.
 
-## Current Deployments
+The bridge and AMB contracts are existing infrastructure. The new Ethereum router and Gnosis settlement router do
+not change them. Their operators and governance remain part of the trust model.
 
-| Network | Contract | Address |
-| --- | --- | --- |
-| Ethereum | `MainnetStablecoinBridgeRouter` | `0x634D45eFa4F053DD168648B15aD2A34Ec58852b0` |
-| Ethereum | USDS token bridged by router | `0xdC035D45d973E3EC169d2276DDab16f1e407384F` |
-| Ethereum | sUSDS token accepted by router | `0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD` |
-| Ethereum | Canonical xDai bridge | `0x4aa42145Aa6Ebf72e164C9bBC74fbD3788045016` |
-| Gnosis | `SavingsXDaiReceiver` singleton | `0x9C9790A9fcd56398a96a415439bEa1be6D6dcF99` |
-| Gnosis | `SavingsXDaiReceiverFactory` | `0x0D53e8be621d280151B664c62A52EF4194bc5531` |
-| Gnosis | Savings xDAI adapter | `0xD499b51fcFc66bd31248ef4b28d656d67E591A94` |
+## Read the design
 
-Sourcify reported exact matches for the router, receiver singleton, and factory.
-Tenderly automation is deployed as one public webhook Action named
-`Deterministic-Bridger`.
+- [Architecture and funds flow](docs/AMB_ROUTER_ARCHITECTURE.md) — the paths for assets
+  and claims, payment checks, and retries.
+- [Security and ownership](docs/AMB_ROUTER_SECURITY.md) — each layer's powers and
+  failure boundaries.
+- [Frontend integration](docs/AMB_ROUTER_FRONTEND.md) — wallet calls, statuses, and
+  message recovery.
+- [Deployment and operations](docs/AMB_ROUTER_OPERATIONS.md) — setup, failures, and
+  rollout gates.
+- [Integration evidence](docs/AMB_ROUTER_INTEGRATION.md) — historical bridge observations
+  and test results.
+- [Branch audit](docs/AMB_ROUTER_AUDIT.md) — coverage, deployment checks, and open
+  production risks.
 
-## System Flow
+The [original design](docs/superpowers/specs/2026-10-09-fcr-amb-vault-design.md) and
+[implementation plan](docs/superpowers/plans/2026-10-09-fcr-amb-vault.md) are kept as
+project history.
 
-```mermaid
-flowchart LR
-  payer[Mainnet payer]
-  router[MainnetStablecoinBridgeRouter]
-  bridge[Ethereum xDai bridge]
-  receiver[Counterfactual Gnosis receiver]
-  factory[SavingsXDaiReceiverFactory]
-  adapter[Savings xDAI adapter]
-  owner[Deterministic receiver]
+## Run the checks
 
-  payer -->|approve USDS or sUSDS| router
-  router -->|redeem sUSDS when needed| router
-  router -->|relayTokens to predicted address| bridge
-  bridge -->|mints xDAI| receiver
-  factory -->|deployAndConvert| receiver
-  receiver -->|depositXDAI| adapter
-  adapter -->|sDAI shares| owner
-```
-
-```mermaid
-sequenceDiagram
-  participant User as User wallet
-  participant UI as Web frontend
-  participant Router as Ethereum router
-  participant Bridge as xDai bridge
-  participant Action as Deterministic-Bridger
-  participant Factory as Gnosis factory
-  participant Receiver as Gnosis receiver
-  participant Adapter as Savings xDAI adapter
-
-  UI->>Router: receiverFor(deterministicReceiver)
-  UI->>User: show predicted Gnosis receiver
-  User->>Router: bridge/bridgeTo USDS or bridgeSavingsUSDS/bridgeSavingsUSDSTo
-  Router->>Bridge: relayTokens(gnosisReceiver, amount)
-  Router-->>UI: BridgeRequested event
-  UI->>Action: register(mainnetTxHash, logIndex)
-  Action->>Action: validate fresh router event
-  Bridge->>Receiver: mint native xDAI
-  UI->>Action: process()
-  Action->>Factory: deployAndConvert(deterministicReceiver)
-  Factory->>Receiver: deploy and setUp
-  Receiver->>Adapter: depositXDAI(deterministicReceiver)
-```
-
-## Address Derivation
-
-```mermaid
-flowchart TD
-  deterministicReceiver[deterministicReceiver]
-  salt["salt = keccak256(abi.encode(deterministicReceiver))"]
-  singleton[SavingsXDaiReceiver singleton]
-  initCode[EIP-1167 clone init code]
-  factory[SavingsXDaiReceiverFactory]
-  gnosisReceiver[gnosisReceiver]
-
-  deterministicReceiver --> salt
-  singleton --> initCode
-  salt --> gnosisReceiver
-  initCode --> gnosisReceiver
-  factory --> gnosisReceiver
-```
-
-The invariant is:
-
-```text
-gnosisReceiver = CREATE2(factory, salt(deterministicReceiver), clone(singleton))
-```
-
-Both `MainnetStablecoinBridgeRouter.receiverFor(address)` and
-`SavingsXDaiReceiverFactory.predict(address)` use this same derivation path.
-
-## Contracts
-
-- `MainnetStablecoinBridgeRouter`: pulls USDS from `msg.sender`, or pulls sUSDS
-  and redeems it into USDS, predicts the deterministic Gnosis receiver from
-  `deterministicReceiver`, clears bridge allowance around the relay, and calls
-  `foreignBridge.relayTokens(address,uint256)`.
-- `SavingsXDaiReceiver`: Gnosis clone that accepts native xDAI, exposes
-  `convertToSavingsXDai()`, and can move accidental ERC-20 balances only to the
-  bound deterministic receiver.
-- `SavingsXDaiReceiverFactory`: deploys receiver clones with `CREATE2` and
-  exposes `deployAndConvert(address)` for watchtowers.
-- `DeterministicReceiverLib`: shared salt, EIP-1167 creation code, prediction,
-  and deployment logic.
-
-The router hardcodes Ethereum USDS as the bridge token and Ethereum sUSDS as the
-accepted ERC-4626 vault input. The foreign bridge, Gnosis factory, and Gnosis
-singleton remain deployment-configured.
-
-## Tenderly Web2 Automation
-
-The frontend calls the public `Deterministic-Bridger` webhook directly. There is
-no backend retry service and no Tenderly block or periodic trigger.
-
-```mermaid
-stateDiagram-v2
-  [*] --> MainnetPending
-  MainnetPending --> Registered: mined BridgeRequested
-  Registered --> BridgeFinalizing: register accepted
-  BridgeFinalizing --> ReadyToConvert: xDAI balance > 0
-  ReadyToConvert --> Converted: deployAndConvert succeeds
-  BridgeFinalizing --> NeedsManualClaim: timeout
-  ReadyToConvert --> NeedsManualClaim: automation timeout
-```
-
-Webhook operations:
-
-```json
-{ "op": "register", "mainnetTxHash": "0x...", "logIndex": 123 }
-```
-
-```json
-{ "op": "process" }
-```
-
-```json
-{ "op": "inspect" }
-```
-
-`op=register` validates a fresh mined router `BridgeRequested` event before it
-stores work, verifies the Gnosis factory prediction, and dedupes by
-`gnosisReceiver.toLowerCase()`. If a transaction contains multiple router
-events, tx-hash-only registration validates and tracks every event separately
-with its own `logIndex`. `op=process` checks pending receiver balances in small
-batches and calls `deployAndConvert` only for funded receivers.
-
-See [Tenderly Actions](docs/TENDERLY_ACTIONS.md) for Action deployment/runtime
-details and [Frontend integration](docs/FRONTEND_INTEGRATION.md) for the
-browser-side flow, status model, polling, reload recovery, and manual fallback.
-
-## Security Model
-
-The watchtower is not trusted with user funds. It can only execute public
-conversion paths over jobs derived from validated router events. It cannot select
-an arbitrary payout address because the receiver is bound to
-`deterministicReceiver` during setup, and ERC-20 recovery always pays that same
-address.
-
-Primary operational controls:
-
-- The Tenderly webhook is public by design for browser-only use.
-- `op=register` rejects missing, reverted, unrelated, malformed, or stale
-  receipts.
-- `bridgeTo` and `bridgeSavingsUSDSTo` emit the intended
-  `deterministicReceiver` and the predicted `gnosisReceiver`; fork tests verify
-  the canonical bridge event targets that same predicted receiver.
-- `WATCHTOWER_MAX_AGE_SECONDS` bounds receipt age and pending job lifetime.
-- `WATCHTOWER_BATCH_SIZE` bounds public `op=process` work.
-- `WATCHTOWER_PRIVATE_KEY` should be a dedicated low-balance executor key.
-- No Tenderly API keys, private keys, or authenticated RPC URLs should be shipped
-  to frontend code.
-
-See [docs/SECURITY.md](docs/SECURITY.md) for the detailed security review.
-
-## Development
-
-Copy `.env.example` to `.env` and fill in local deployment-specific values:
+Install the locked Node dependencies and Foundry test library:
 
 ```bash
-MAINNET_RPC_URL=
-GNOSIS_RPC_URL=
-SAVINGS_XDAI_ADAPTER=0x...
-GNOSIS_SINGLETON=0x...
-SAVINGS_XDAI_RECEIVER_FACTORY=0x...
-ROUTER=0x634D45eFa4F053DD168648B15aD2A34Ec58852b0
-PRIVATE_KEY=
+bun install --frozen-lockfile
+npm run install:foundry
 ```
 
 Run the local checks:
 
 ```bash
-npm run install:foundry
-forge test
-forge fmt --check
 forge build
-node --check script/watchtower.mjs
-node --check actions/receiverQueue.js
-npm run test:actions
+forge fmt --check
+forge test
+npm run check:executor
+npm run test:router-settler
+npm run test:deployment
 ```
 
-Optional fork smoke checks are no-ops unless RPC URLs are configured:
+The pinned fork tests also need Ethereum and Gnosis RPC URLs with access to the
+historical blocks in the [evidence guide](docs/AMB_ROUTER_INTEGRATION.md):
 
 ```bash
-MAINNET_RPC_URL=$MAINNET_RPC_URL GNOSIS_RPC_URL=$GNOSIS_RPC_URL forge test --match-contract ForkSmokeTest
+FOUNDRY_PROFILE=amb_router_fork forge test -vv
 ```
 
-Deploy Gnosis contracts first, then the mainnet router. The wrapper scripts
-always pass `--verify --verifier sourcify`, so deployed contracts are submitted
-to Sourcify as part of the broadcast flow:
+The paired [deployment script](docs/AMB_ROUTER_OPERATIONS.md) checks both chains
+and their reciprocal contract addresses in dry-run mode before any transaction.
+
+## Run the executor
+
+The executor needs a dedicated Gnosis gas account and a persistent checkpoint directory.
+Set `AMB_GNOSIS_ROUTER`, `AMB_GNOSIS_ROUTER_DEPLOYMENT_BLOCK`, `GNOSIS_RPC_URL` and
+`ROUTER_SETTLER_PRIVATE_KEY`, then run:
 
 ```bash
-npm run deploy:gnosis
-npm run deploy:mainnet
+node --env-file=.env script/router-settler.mjs
 ```
 
-Run a one-off watchtower conversion or start the polling watchtower:
+Copy `.env.example` to `.env` for the full configuration and keep RPC credentials and
+keys private. See [operations](docs/AMB_ROUTER_OPERATIONS.md) before running it outside
+local development.
 
-```bash
-DETERMINISTIC_RECEIVER=0x... forge script script/WatchtowerDeployAndConvert.s.sol --rpc-url "$GNOSIS_RPC_URL" --broadcast
-ROUTER=0x634D45eFa4F053DD168648B15aD2A34Ec58852b0 SAVINGS_XDAI_RECEIVER_FACTORY=0x... PRIVATE_KEY=0x... node script/watchtower.mjs
-```
+## Before real deposits
 
-## Documentation
+The router starts deprecated. Its bridge council Safe can verify the current bridge
+implementation, enable deposits, or deprecate them again for an upgrade review.
+An Ethereum bridge implementation change blocks deposits until council review.
+The Gnosis settlement router needs no
+sponsor buffer: bridge credits fund settlement. Optional sponsor xDAI is a permanent
+donation. Claims can wait if the bridge, AMB, native credit or savings adapter is
+delayed; there is no automatic application refund or deadline. A separate Ethereum
+receiver can hold a canonical bridge return for a Safe-reviewed manual refund.
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Frontend integration](docs/FRONTEND_INTEGRATION.md)
-- [Deployment checklist](docs/DEPLOYMENT_CHECKLIST.md)
-- [Tenderly Actions](docs/TENDERLY_ACTIONS.md)
-- [Security review](docs/SECURITY.md)
+[Fast Confirmation Rule](https://docs.gnosischain.com/bridges/fast-confirmation-rule)
+may shorten bridge validator waiting time. Live settings for both delivery paths,
+native credit ordering and recovery behavior still need validation. The
+[security guide](docs/AMB_ROUTER_SECURITY.md) and
+[operations guide](docs/AMB_ROUTER_OPERATIONS.md) list those decisions.

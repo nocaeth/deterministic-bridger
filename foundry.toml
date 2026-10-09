@@ -11,6 +11,17 @@ evm_version = "cancun"
 auto_detect_remappings = false
 build_info = true
 
+[profile.default.fuzz]
+runs = 1024
+
+[profile.default.invariant]
+runs = 256
+depth = 500
+fail_on_revert = true
+
+[profile.amb_router_fork]
+test = "test-fork"
+
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"
 gnosis = "${GNOSIS_RPC_URL}"
