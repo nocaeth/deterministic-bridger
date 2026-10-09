@@ -7,7 +7,9 @@ import { INonceXDaiBridge } from "../src/interfaces/INonceXDaiBridge.sol";
 import { IAMB } from "../src/interfaces/IAMB.sol";
 import { ChainConstants } from "../src/libraries/ChainConstants.sol";
 
+/// @notice Deploys the Ethereum router at the address already trusted by the Gnosis vault.
 contract DeployAmbRouter is Script {
+    /// @notice Validates the expected CREATE nonce and deploys with the configured bridge and AMB.
     function run() external returns (MainnetAmbBridgeRouter router) {
         require(block.chainid == 1, "ETHEREUM_ONLY");
         uint256 key = vm.envUint("PRIVATE_KEY");

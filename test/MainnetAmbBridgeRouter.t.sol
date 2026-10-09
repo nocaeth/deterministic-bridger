@@ -12,6 +12,7 @@ import { MockERC20 } from "./mocks/MockERC20.sol";
 import { MockERC4626 } from "./mocks/MockERC4626.sol";
 import { MockNonceXDaiBridge } from "./mocks/MockNonceXDaiBridge.sol";
 import { MockAMB } from "./mocks/MockAMB.sol";
+import { ReentrancyGuard } from "../src/utils/ReentrancyGuard.sol";
 
 contract MainnetAmbBridgeRouterTest is Test {
     MainnetAmbBridgeRouter internal router;
@@ -95,6 +96,15 @@ contract MainnetAmbBridgeRouterTest is Test {
 
     function testAmbFailureRollsBackBridgeAndClaim() external {
         amb.setRejectSubmission(true);
+        _expectSavingsRollback();
+    }
+
+    function testZeroAmbMessageIdRollsBackBridgeAndClaim() external {
+        vm.mockCall(
+            address(amb),
+            abi.encodeWithSelector(amb.requireToPassMessage.selector),
+            abi.encode(bytes32(0))
+        );
         _expectSavingsRollback();
     }
 
@@ -198,5 +208,170 @@ contract MainnetAmbBridgeRouterTest is Test {
         foreign.setImplementation(address(0xFADE));
         vm.expectRevert(MainnetAmbBridgeRouter.UnsupportedBridge.selector);
         router.bridge(1, 0);
+    }
+
+    function testBridgeCallbackCannotResendExistingClaim() external {
+        _fundSavings(2 ether);
+        vm.prank(payer);
+        (bytes32 first,) = router.bridgeSavingsUSDS(2 ether, 0);
+        foreign.setReentry(address(router), abi.encodeCall(router.resendClaim, (first)));
+        _fundSavings(3 ether);
+        vm.prank(payer);
+        (bytes32 second,) = router.bridgeSavingsUSDS(3 ether, 0);
+        assertFalse(foreign.reentrySucceeded());
+        assertEq(
+            foreign.reentryResult(), abi.encodeWithSelector(ReentrancyGuard.ReentrantCall.selector)
+        );
+        assertNotEq(first, second);
+        assertEq(foreign.nonce(), 2);
+        assertEq(amb.submissions(), 2);
+        assertEq(usds.balanceOf(address(foreign)), 5 ether);
+    }
+
+    function testBridgeCallbackCannotEnterAnotherFundingMethod() external {
+        foreign.setReentry(address(router), abi.encodeCall(router.bridge, (0, 0)));
+        _fundSavings(3 ether);
+        vm.prank(payer);
+        router.bridgeSavingsUSDS(3 ether, 0);
+        assertFalse(foreign.reentrySucceeded());
+        assertEq(
+            foreign.reentryResult(), abi.encodeWithSelector(ReentrancyGuard.ReentrantCall.selector)
+        );
+        assertEq(foreign.nonce(), 1);
+        assertEq(amb.submissions(), 1);
+    }
+
+    function testAmbCallbackCannotResendClaimBeingSubmitted() external {
+        bytes32 expectedId = VaultClaimLib.id(
+            address(router), address(foreign), address(0x5678), vault, bytes32(0)
+        );
+        amb.setReentry(address(router), abi.encodeCall(router.resendClaim, (expectedId)));
+        _fundSavings(3 ether);
+        vm.prank(payer);
+        (bytes32 id,) = router.bridgeSavingsUSDS(3 ether, 0);
+        assertEq(id, expectedId);
+        assertFalse(amb.reentrySucceeded());
+        assertEq(
+            amb.reentryResult(), abi.encodeWithSelector(ReentrancyGuard.ReentrantCall.selector)
+        );
+        assertEq(router.getClaim(id).amount, 3 ether);
+        assertEq(amb.submissions(), 1);
+        assertEq(foreign.nonce(), 1);
+    }
+
+    function testFuzzCallerFundingPreservesExistingBalances(
+        uint128 amountSeed,
+        uint128 routerBalanceSeed,
+        uint128 bridgeBalanceSeed,
+        address receiver,
+        uint256 minimum
+    ) external {
+        uint256 amount = bound(amountSeed, 1, 1e30);
+        uint256 routerBalance = bound(routerBalanceSeed, 0, 1e30);
+        uint256 bridgeBalance = bound(bridgeBalanceSeed, 0, 1e30);
+        if (receiver == address(0)) receiver = address(1);
+        usds.mint(address(router), routerBalance);
+        usds.mint(address(foreign), bridgeBalance);
+        usds.mint(payer, amount);
+        vm.prank(payer);
+        usds.approve(address(router), amount);
+        vm.prank(payer);
+        (bytes32 id, uint256 assets) = router.bridgeTo(receiver, amount, minimum);
+        VaultClaimLib.Claim memory claim = router.getClaim(id);
+        assertEq(claim.payer, payer);
+        assertEq(claim.recipient, receiver);
+        assertEq(claim.amount, amount);
+        assertEq(claim.minShares, minimum);
+        assertEq(assets, amount);
+        assertEq(usds.balanceOf(payer), 0);
+        assertEq(usds.balanceOf(address(router)), routerBalance);
+        assertEq(usds.balanceOf(address(foreign)), bridgeBalance + amount);
+        assertEq(usds.allowance(address(router), address(foreign)), 0);
+        assertEq(foreign.lastReceiver(), vault);
+    }
+
+    function testFuzzSavingsUsesRedeemedAssets(
+        uint128 sharesSeed,
+        uint8 rateSeed,
+        uint128 existingBalanceSeed,
+        uint256 minimum
+    ) external {
+        uint256 shares = bound(sharesSeed, 1, 1e25);
+        uint256 rate = bound(rateSeed, 1, 10);
+        uint256 existingBalance = bound(existingBalanceSeed, 0, 1e30);
+        susds.setAssetsPerShare(rate);
+        _fundSavings(shares);
+        usds.mint(address(router), existingBalance);
+        vm.prank(payer);
+        (bytes32 id, uint256 assets) = router.bridgeSavingsUSDSTo(recipient, shares, minimum);
+        assertEq(assets, shares * rate);
+        assertEq(router.getClaim(id).amount, shares * rate);
+        assertEq(router.getClaim(id).minShares, minimum);
+        assertEq(susds.balanceOf(payer), 0);
+        assertEq(usds.balanceOf(address(router)), existingBalance);
+        assertEq(usds.balanceOf(address(foreign)), shares * rate);
+    }
+
+    function testFuzzSourceFailureIsAtomic(
+        uint128 amountSeed,
+        uint128 oldBalanceSeed,
+        uint8 failureSeed,
+        bool savings
+    ) external {
+        uint256 amount = bound(amountSeed, 1, 1e30);
+        uint256 oldBalance = bound(oldBalanceSeed, 0, 1e30);
+        usds.mint(address(router), oldBalance);
+        usds.mint(address(foreign), oldBalance);
+        if (savings) {
+            _fundSavings(amount);
+        } else {
+            usds.mint(payer, amount);
+            vm.prank(payer);
+            usds.approve(address(router), amount);
+        }
+        uint256 failure = uint256(failureSeed) % 4;
+        if (failure == 0) foreign.setRejectRelay(true);
+        else if (failure == 1) foreign.setNonceDelta(0);
+        else if (failure == 2) foreign.setPullShort(true);
+        else amb.setRejectSubmission(true);
+        bytes32 id = VaultClaimLib.id(
+            address(router), address(foreign), address(0x5678), vault, bytes32(0)
+        );
+        vm.expectRevert();
+        vm.prank(payer);
+        if (savings) router.bridgeSavingsUSDSTo(recipient, amount, 0);
+        else router.bridgeTo(recipient, amount, 0);
+        assertEq(savings ? susds.balanceOf(payer) : usds.balanceOf(payer), amount);
+        assertEq(
+            savings
+                ? susds.allowance(payer, address(router))
+                : usds.allowance(payer, address(router)),
+            amount
+        );
+        assertEq(usds.balanceOf(address(router)), oldBalance);
+        assertEq(usds.balanceOf(address(foreign)), oldBalance);
+        assertEq(foreign.nonce(), 0);
+        assertEq(amb.submissions(), 0);
+        assertEq(usds.allowance(address(router), address(foreign)), 0);
+        assertEq(router.getClaim(id).payer, address(0));
+    }
+
+    function testFuzzAnotherWalletCannotUsePayerApproval(address attacker, uint128 amountSeed)
+        external
+    {
+        vm.assume(attacker != payer && attacker != address(router) && attacker != address(foreign));
+        uint256 amount = bound(amountSeed, 1, 1e30);
+        usds.mint(payer, amount);
+        usds.mint(address(router), amount);
+        vm.prank(payer);
+        usds.approve(address(router), amount);
+        vm.expectRevert();
+        vm.prank(attacker);
+        router.bridgeTo(attacker == address(0) ? address(1) : attacker, amount, 0);
+        assertEq(usds.balanceOf(payer), amount);
+        assertEq(usds.allowance(payer, address(router)), amount);
+        assertEq(usds.balanceOf(address(router)), amount);
+        assertEq(foreign.nonce(), 0);
+        assertEq(amb.submissions(), 0);
     }
 }

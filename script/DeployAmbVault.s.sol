@@ -8,8 +8,9 @@ import { IAMB } from "../src/interfaces/IAMB.sol";
 import { ISavingsXDaiAdapter } from "../src/interfaces/ISavingsXDaiAdapter.sol";
 import { ChainConstants } from "../src/libraries/ChainConstants.sol";
 
-/// @notice Deploy first, bound to the dedicated Ethereum deployer's next CREATE address.
+/// @notice Deploys the Gnosis vault bound to the expected Ethereum router address.
 contract DeployAmbVault is Script {
+    /// @notice Deploys with the configured canonical bridge, AMB and savings adapter.
     function run() external returns (SavingsXDaiSettlementVault vault) {
         require(block.chainid == 100, "GNOSIS_ONLY");
         address expectedRouter = vm.envAddress("EXPECTED_MAINNET_AMB_ROUTER");

@@ -331,4 +331,127 @@ contract SavingsXDaiSettlementVaultTest is AmbVaultFixture {
         vault.settle(id);
         assertEq(adapter.callCount(), 1);
     }
+
+    function testFuzzUnauthenticatedMessagesCannotReleaseReadyFunds(
+        address attacker,
+        uint256 sourceChain,
+        uint128 amountSeed
+    ) external {
+        uint256 amount = bound(amountSeed, 1, 1e30);
+        bytes32 id = _bridgeUSDS(amount, 0);
+        VaultClaimLib.Claim memory claim = router.getClaim(id);
+        _execute(id);
+        _credit(amount);
+        if (attacker == address(amb)) attacker = address(1);
+        vm.prank(attacker);
+        (bool directSuccess,) =
+            address(vault).call(abi.encodeCall(IAMBClaimReceiver.registerClaim, (claim)));
+        assertFalse(directSuccess);
+        address wrongSender = attacker == address(router) ? address(1) : attacker;
+        assertFalse(_deliverClaim(claim, wrongSender, 1, 700_000));
+        if (sourceChain == 1) sourceChain = 100;
+        assertFalse(_deliverClaim(claim, address(router), sourceChain, 700_000));
+        assertEq(uint256(vault.settlementStatus(id)), uint256(Vault.SettlementResult.Unknown));
+        assertEq(adapter.callCount(), 0);
+        assertEq(address(vault).balance, amount);
+    }
+
+    function testFuzzRecipientControlsOnlyDownwardPendingMinimum(
+        address receiver,
+        address attacker,
+        uint128 minimumSeed,
+        uint256 newMinimumSeed
+    ) external {
+        recipient = receiver == address(0) ? address(1) : receiver;
+        if (attacker == recipient) attacker = address(uint160(attacker) ^ 1);
+        uint256 originalMinimum = bound(minimumSeed, 1, 1e30);
+        uint256 newMinimum = bound(newMinimumSeed, 0, originalMinimum);
+        bytes32 id = _bridgeUSDS(5 ether, originalMinimum);
+        assertTrue(_deliver(id));
+        vm.expectRevert(Vault.InvalidMinimum.selector);
+        vm.prank(attacker);
+        vault.lowerMinShares(id, newMinimum);
+        vm.expectRevert(Vault.InvalidMinimum.selector);
+        vm.prank(recipient);
+        vault.lowerMinShares(id, originalMinimum + 1);
+        vm.prank(recipient);
+        vault.lowerMinShares(id, newMinimum);
+        assertTrue(_deliver(id));
+        (VaultClaimLib.Claim memory original, Vault.ClaimStatus status, uint256 effectiveMinimum) =
+            vault.getClaim(id);
+        assertEq(original.recipient, recipient);
+        assertEq(original.minShares, originalMinimum);
+        assertEq(effectiveMinimum, newMinimum);
+        assertEq(uint256(status), uint256(Vault.ClaimStatus.Pending));
+        assertEq(adapter.callCount(), 0);
+    }
+
+    function testFuzzFailedConversionRollsBackThenPaysOnce(
+        uint128 amountSeed,
+        uint128 bufferSeed,
+        uint8 rateSeed,
+        uint256 acceptedMinimumSeed,
+        address receiver
+    ) external {
+        uint256 amount = bound(amountSeed, 1, 1e24);
+        uint256 buffer = bound(bufferSeed, 0, 1e30);
+        uint256 rate = bound(rateSeed, 1, 10);
+        uint256 expectedShares = amount * rate;
+        recipient = receiver == address(0) ? address(1) : receiver;
+        bytes32 id = _bridgeUSDS(amount, expectedShares + 1);
+        adapter.setBehavior(false, false, rate);
+        _execute(id);
+        _credit(amount + buffer);
+        assertTrue(_deliver(id));
+        vm.expectRevert(Vault.InsufficientShares.selector);
+        vault.settle(id);
+        _pending(id);
+        assertEq(address(vault).balance, amount + buffer);
+        assertEq(adapter.totalValue(), 0);
+        assertEq(adapter.sharesOf(recipient), 0);
+        uint256 acceptedMinimum = bound(acceptedMinimumSeed, 0, expectedShares);
+        vm.prank(recipient);
+        vault.lowerMinShares(id, acceptedMinimum);
+        vm.prank(address(0xCAFE));
+        (Vault.SettlementResult result, uint256 shares) = vault.settle(id);
+        assertEq(uint256(result), uint256(Vault.SettlementResult.Paid));
+        assertEq(shares, expectedShares);
+        assertEq(adapter.sharesOf(recipient), expectedShares);
+        assertEq(adapter.totalValue(), amount);
+        assertEq(address(vault).balance, buffer);
+        assertTrue(_deliver(id));
+        vault.settle(id);
+        assertEq(adapter.callCount(), 1);
+        vm.expectRevert(Vault.InvalidMinimum.selector);
+        vm.prank(recipient);
+        vault.lowerMinShares(id, 0);
+    }
+
+    function testFuzzWrongTransferCommitmentsCannotUseBuffer(
+        uint128 amountSeed,
+        bytes32 wrongNonce,
+        address wrongReceiver
+    ) external {
+        uint256 amount = bound(amountSeed, 1, 1e30);
+        bytes32 id = _bridgeUSDS(amount, 0);
+        VaultClaimLib.Claim memory claim = router.getClaim(id);
+        if (wrongNonce == claim.bridgeNonce) wrongNonce = bytes32(uint256(wrongNonce) ^ 1);
+        if (wrongReceiver == address(vault)) wrongReceiver = address(1);
+        _credit(amount);
+        assertTrue(_deliver(id));
+        home.setProcessed(
+            keccak256(abi.encodePacked(wrongReceiver, amount, claim.bridgeNonce)), true
+        );
+        home.setProcessed(
+            keccak256(abi.encodePacked(address(vault), amount + 1, claim.bridgeNonce)), true
+        );
+        home.setProcessed(keccak256(abi.encodePacked(address(vault), amount, wrongNonce)), true);
+        vault.settle(id);
+        _pending(id);
+        assertEq(adapter.callCount(), 0);
+        assertEq(address(vault).balance, amount);
+        assertEq(
+            uint256(vault.settlementStatus(id)), uint256(Vault.SettlementResult.WaitingForBridge)
+        );
+    }
 }

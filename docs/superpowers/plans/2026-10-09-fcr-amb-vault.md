@@ -1,6 +1,13 @@
-# FCR AMB settlement vault implementation plan
+# Original FCR AMB settlement vault implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking. Implementation is now authorized. Production broadcast, funding and traffic changes remain unapproved.
+This is the original completed implementation checklist, retained as architecture
+and rollout history. It is not a current source-level specification. See the
+[architecture](../../AMB_VAULT_ARCHITECTURE.md),
+[security and ownership model](../../AMB_VAULT_SECURITY.md),
+[operations](../../AMB_VAULT_OPERATIONS.md) and
+[verification evidence](../../AMB_VAULT_INTEGRATION.md) for the current system.
+Unchecked staging and product decisions remain open; production broadcast,
+funding and traffic changes require separate authorization.
 
 **Goal:** Bridge caller-funded Ethereum USDS or redeemed sUSDS into a shared Gnosis
 vault and issue sDAI through authenticated, durable, at-most-once claims.

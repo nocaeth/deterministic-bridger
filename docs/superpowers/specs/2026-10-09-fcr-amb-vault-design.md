@@ -1,7 +1,15 @@
 # FCR, AMB and a shared sDAI settlement vault
 
-Date: 2026-10-09. Status: implemented, with production deployment evidence gates.
+Date: 2026-10-09. Status: original design rationale and integration decisions.
 Branch: `codex/fcr-amb-vault-plan`.
+
+This document records the architecture approved before implementation. Current
+behavior and ownership are documented in the
+[architecture guide](../../AMB_VAULT_ARCHITECTURE.md) and
+[security model](../../AMB_VAULT_SECURITY.md); current ABI and operations are in
+the [frontend guide](../../AMB_VAULT_FRONTEND.md) and
+[runbook](../../AMB_VAULT_OPERATIONS.md). Implementation details and verification
+evidence may evolve from this original design.
 
 ## Outcome and constraints
 
@@ -13,8 +21,9 @@ bridge and AMB contracts unchanged.
 The application consists of an immutable Ethereum router, an immutable Gnosis
 vault, authenticated AMB claims and a small fallback executor.
 
-FCR reduces source confirmation latency. It does not make the two bridges atomic,
-provide a native-mint callback, guarantee a maximum delivery time, or remove the
+FCR can reduce source confirmation latency on enabled lanes. It does not make
+the two bridges atomic, provide a native-mint callback, guarantee a maximum
+delivery time, or remove the
 canonical bridge's validator/governance trust. One transaction per new deposit is
 a user-experience target after approval, not a claim about total validator
 transactions. The added AMB path can increase total bridge transactions.
@@ -71,12 +80,11 @@ Public source reviewed on this date supports the following proposed integration:
    the processing mode of our particular AMB deployment.
    [FCR documentation](https://docs.gnosischain.com/bridges/fast-confirmation-rule).
 
-These are public-source observations, not verified live-proxy behavior. Before
-implementation freezes the integration, record proxy and implementation addresses,
-implementation code hashes, source revisions, chain IDs, block numbers, getter
-results and AMB lanes in `docs/AMB_VAULT_INTEGRATION.md`. Verify the exact transfer
-marker and fee behavior on pinned forks. Optional fork tests that silently return
-without RPC configuration do not satisfy this gate.
+These were the pre-implementation public-source observations. Pinned deployment
+and fork evidence is now recorded in
+[integration evidence](../../AMB_VAULT_INTEGRATION.md), with separate unverified
+live-delivery and production gates. Optional fork tests that silently return
+without RPC configuration do not satisfy the integration gate.
 
 ## The accompaniment guarantee
 

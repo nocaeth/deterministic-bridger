@@ -82,3 +82,5 @@ On reload, re-read the vault instead of treating a cached transaction receipt or
 webhook as completion. Allow confirmation/reorg handling for both chains. Show
 the [operations limits](AMB_VAULT_OPERATIONS.md), especially no timeout refund,
 no sponsor withdrawal and settlement freeze after incompatible bridge upgrades.
+The [security guide](AMB_VAULT_SECURITY.md) explains external validator,
+governance, savings and contract-wallet assumptions that the product must disclose.

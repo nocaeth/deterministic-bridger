@@ -2,6 +2,10 @@
 
 Read-only observations on 2026-10-09; no transaction was broadcast. The new router
 and vault are undeployed. RPC credentials are excluded from this document.
+This is historical evidence at the blocks below, not a claim that current proxy
+configuration or validator processing has remained unchanged. The
+[security model](AMB_VAULT_SECURITY.md) identifies the assumptions tests cannot
+establish.
 
 | Field | Ethereum | Gnosis |
 | --- | --- | --- |
@@ -32,14 +36,14 @@ threshold is successful execution.
 Run the separate required-RPC suite with
 `FOUNDRY_PROFILE=amb_vault_fork forge test -vv`; both RPC variables must exist.
 It exercises a USDS relay and real savings adapter entirely in local forks.
-Observed final required-RPC result: **4 passed, 0 failed** at the pinned blocks. The real adapter
+Initial implementation required-RPC result: **4 passed, 0 failed** at the pinned blocks. The real adapter
 deposit used **87,625 gas** (5 xDAI to a fresh recipient). Peak runner RSS was
 496,168 KiB. This verifies ordinary EVM contract behavior, not consensus-native
 mint timing. Paired deployment scripts were dry-run with a fixed test key and
 reject a changed Ethereum deployer nonce; no transaction was broadcast.
 
-Callback measurements using the real savings adapter and bridge configuration,
-a mock AMB wrapper and a simulated execution marker:
+Initial implementation callback measurements using the real savings adapter and
+bridge configuration, a mock AMB wrapper and a simulated execution marker:
 
 | Path | Observed gas, including mock AMB wrapper |
 | --- | ---: |
@@ -98,11 +102,31 @@ callback budgets and paired deployment dry-runs. Executor tests cover
 signed-before-broadcast restart, RPC ambiguity, confirmed nonce/receipt handling,
 event replay, disk errors and file/directory sync ordering.
 
+Current test responsibilities:
+
+| Suite | Behavior checked |
+| --- | --- |
+| Router unit and fuzz tests | Caller funding isolated from prior balances, sUSDS asset/redemption, allowances, all recipient variants, complete source rollback and immutable resend |
+| Vault unit and fuzz tests | AMB caller/sender/chain authentication, exact execution hash, independent liquidity gate, recipient-only minimum lowering, replay and conversion rollback, gas exhaustion and reentry |
+| Claim-library tests | Deployment-scoped identity and separation when the router, bridges, vault or nonce changes |
+| Safe-token tests | Contract target and optional ERC-20 return validation, including empty, false and malformed return data |
+| Stateful invariant handler | Independently modeled immutable claims, per-recipient shares, source custody/nonces and native credits minus payouts under changing order, duplicate/conflicting messages, invalid authority and temporary dependency failures |
+| Executor Node tests | Signed transaction validation, durable-before-broadcast ordering, restart/rebroadcast, nonce recovery, reorg replay, disk/RPC errors and sanitized failure reports |
+| Required-RPC forks | Historical canonical nonce/event and processed-marker behavior, real savings conversion, callback budget and reciprocal deployment dry-runs |
+
+The default Foundry profile requests 1,024 cases per fuzz test and 256 invariant
+runs of 500 actions, with unexpected handler reverts treated as failures. Expected
+rejections are checked by the handler and unit tests. This separates application
+state assertions from the independent accounting model; it is not evidence about
+real validator honesty or future governance. Observed run results are recorded
+separately below.
+
 Run `forge test`, `npm run test:vault-settler`, `npm run check:executor`,
 `forge build` and `forge fmt --check` locally. The separate fork command above
 requires archival access to both documented chain snapshots.
 
-Standalone-branch verification on 2026-10-09:
+Standalone-branch baseline verification on 2026-10-09 (`b449228`, before the
+subsequent hardening changes):
 
 | Check | Observed result |
 | --- | --- |
@@ -112,13 +136,72 @@ Standalone-branch verification on 2026-10-09:
 | `npm run test:vault-settler` | 18 passed, 0 failed |
 | `npm run check:executor`, `forge fmt --check`, `git diff --check` | Passed |
 
-Source imports, documentation links and package/lock metadata were checked after
-branch isolation. The pinned live fork results above remain the prior observed
-results; live fork execution was not repeated for the removal-only cleanup.
+Those results describe branch isolation only. The fresh hardening results below
+supersede its local test counts and repeat the pinned fork execution.
 
-A fresh whole-branch review found no Critical contract issue and identified
+The initial implementation review found no Critical contract issue and identified
 checkpoint-directory durability, stalled-transaction diagnostics, a minimum event
 ABI mismatch and missing reentry/replay cases. These were corrected with
 regression checks. The real above-limit path is supported by linked bridge source
 and local gate tests; it is **not** specifically exercised in the pinned fork.
 This is an implementation review, not a production security audit.
+
+## Hardening verification on 2026-10-09
+
+Verified the hardened working tree against baseline `b449228` with Solidity
+0.8.35, the Cancun target and 200 optimizer runs:
+
+| Check | Observed result |
+| --- | --- |
+| `forge build --force --sizes` | Passed; router runtime 6,115 bytes, vault runtime 4,872 bytes |
+| `forge test -vv` | 63 passed, 0 failed; 11 fuzz properties × 1,024 cases; invariant 256 runs × 500 actions, 128,000 calls and zero unexpected handler reverts |
+| Required-RPC pinned forks | 4 passed, 0 failed, using the same blocks and implementation hashes above; deployment dry-runs only |
+| Executor tests and syntax | 34 Node checks passed, including invalid signed transactions and accepted types 0, 1 and 2; syntax passed |
+| `forge fmt --check`, `git diff --check` | Passed |
+| Focused mutation checks | All four disabled safety gates were caught by existing tests in an isolated copy |
+
+The mutation checks removed source-chain authentication, the canonical processed
+gate, minimum-share enforcement, and the shared reentrancy rejection separately.
+Each variant compiled and failed its corresponding behavior test. This is a
+focused regression check, not an exhaustive mutation score or formal proof.
+
+Fresh reviewers inspected Solidity security, keeper durability and validation,
+and testing/documentation. The stale guard import and missing positive type-1
+transaction case they identified were corrected. Slither 0.11.6 analyzed 14
+contracts with 102 detectors and reported 13 findings; review found none
+actionable within the documented trust model:
+
+| Detector findings | Disposition |
+| --- | --- |
+| 8 `reentrancy-balance` and 1 `reentrancy-benign` | Source entrypoints share the guard; balance/nonce snapshots deliberately enforce relay postconditions before storing a claim. Callback and rollback tests exercise these boundaries. |
+| 2 `incorrect-equality` | Zero assets and zero AMB message IDs are invalid sentinel values, both intentionally rejected. |
+| 1 `unused-return` | Optional settlement return values are unnecessary for durable registration; failed child calls preserve Pending state. |
+| 1 `reentrancy-events` | The parent emits the failure event after a failed guarded child; that event grants no payment authority. |
+
+The findings were reviewed rather than suppressed in source. Static analysis and
+review do not establish the honesty of configured external dependencies.
+
+### Gas observations
+
+The fork callback uses real bridge configuration and savings conversion, a mock
+AMB wrapper, and a simulated processed marker in both versions:
+
+| Callback path | Initial implementation | Hardened implementation |
+| --- | ---: | ---: |
+| Fresh ready registration and conversion | 380,713 | 358,712 |
+| Duplicate Paid registration | 68,466 | 68,591 |
+| Registration with failed minimum | 311,434 | 291,540 |
+
+The real adapter deposit remained 87,625 gas. A separate local comparison used
+the same 35 baseline unit tests and identical mocks for both source versions,
+including an asset getter needed by the new constructor check. Average measured
+call gas changed from 289,990 to 280,195 for `bridgeSavingsUSDSTo`, 65,702 to
+59,164 for `resendClaim`, and 114,812 to 108,566 for `settle`. These averages mix
+successful, rejected and waiting paths; they are not transaction fee quotes or
+blanket savings promises. The shared nonzero guard avoids repeated zero-to-nonzero
+storage writes while preserving the callback budget.
+
+Heavy commands ran serially; the largest observed peak RSS was 669,832 KiB.
+Live validator delivery, FCR lane configuration, consensus-native mint ordering
+and the real above-limit recovery path remain outside these checks. No transaction
+was broadcast and no application contract or sponsor funding was deployed.

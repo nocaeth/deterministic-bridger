@@ -51,6 +51,8 @@ The source router, home bridge, foreign bridge, AMB endpoints and adapter are
 fixed in constructor configuration. Neither router nor vault has an admin,
 upgrade, arbitrary forwarding, sweep, timeout refund or recipient override.
 The canonical bridges and AMBs retain their own validator/governance trust.
+The [security and ownership guide](AMB_VAULT_SECURITY.md) lists each actor's
+authority, dependency assumptions and consequences of failure.
 
 ## Funds and claim flow
 
@@ -147,6 +149,9 @@ This guarantee assumes the configured AMB authenticates honestly and the
 canonical bridge's processed marker has its tested semantics. It does not
 withstand malicious bridge/AMB validators or governance. It is also not a
 trustless Ethereum light-client proof.
+The processed marker does not bind the payer or sDAI recipient; AMB authenticates
+those fields. Actual issuance of returned shares is trusted to the adapter and
+the savings protocol.
 
 ## Claim and retry states
 

@@ -4,6 +4,9 @@ pragma solidity ^0.8.35;
 /// @title ChainConstants
 /// @notice Canonical addresses used by the vault protocol, deployment scripts and fork tests.
 library ChainConstants {
+    uint256 internal constant ETHEREUM_CHAIN_ID = 1;
+    uint256 internal constant GNOSIS_CHAIN_ID = 100;
+
     /// @notice Ethereum USDS token currently accepted by the canonical xDai bridge.
     address internal constant ETHEREUM_USDS = 0xdC035D45d973E3EC169d2276DDab16f1e407384F;
 

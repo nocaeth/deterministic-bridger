@@ -19,6 +19,10 @@ contract MockERC4626 is IERC4626 {
         assetToken = assetToken_;
     }
 
+    function asset() external view returns (address) {
+        return address(assetToken);
+    }
+
     function setAssetsPerShare(uint256 assetsPerShare_) external {
         assetsPerShare = assetsPerShare_;
     }

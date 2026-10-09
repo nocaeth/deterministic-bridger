@@ -15,11 +15,12 @@ safe retry; a paid claim can never pay again.
 ## Architecture and integration
 
 - [Architecture and funds-flow diagrams](docs/AMB_VAULT_ARCHITECTURE.md)
-- [Detailed protocol design](docs/superpowers/specs/2026-10-09-fcr-amb-vault-design.md)
+- [Security, trust assumptions and ownership](docs/AMB_VAULT_SECURITY.md)
 - [Frontend integration and recovery states](docs/AMB_VAULT_FRONTEND.md)
 - [Deployment and operations](docs/AMB_VAULT_OPERATIONS.md)
 - [Pinned bridge evidence and verification results](docs/AMB_VAULT_INTEGRATION.md)
-- [Implementation plan and rollout gates](docs/superpowers/plans/2026-10-09-fcr-amb-vault.md)
+- [Original design rationale](docs/superpowers/specs/2026-10-09-fcr-amb-vault-design.md)
+- [Original implementation plan](docs/superpowers/plans/2026-10-09-fcr-amb-vault.md)
 
 ## Components
 
@@ -34,6 +35,12 @@ safe retry; a paid claim can never pay again.
 The application contracts have not been deployed. Public bridge/asset addresses
 in the integration evidence describe the tested canonical infrastructure, not
 new application deployments.
+
+Router and vault have no owner or upgrade mechanism. Payment guarantees depend
+on honest configured AMB/bridge behavior and the savings adapter; external
+validators and governance retain their authority. The executor controls timing
+and its gas account, not recipients or amounts. See the security guide for each
+layer's powers and failure boundaries.
 
 ## Development
 

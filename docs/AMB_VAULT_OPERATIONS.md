@@ -26,8 +26,11 @@ address**.
    router.homeBridge, router.foreignBridge, router.foreignAMB, vault.sourceRouter,
    vault.foreignBridge, vault.homeBridge, vault.homeAMB and vault.adapter. Verify
    both implementation addresses/code hashes, chain IDs, local token and adapter
-   code, zero home fee manager/shift and source AMB gas maximum >=700000. Verify
-   bytecode/constructor arguments through Sourcify and publish the resulting ABIs.
+   code, zero home fee manager/shift and source AMB gas maximum >=700000. Confirm
+   sUSDS reports USDS as its ERC-4626 asset. The foreign AMB endpoint reports
+   source/destination 1/100; the home endpoint reports 100/1, while an incoming
+   Ethereum callback must report message source chain 1. Verify bytecode and
+   constructor arguments through Sourcify and publish the resulting ABIs.
    Do this before funding or routing user deposits.
 
 The scripts require a deployment key via `PRIVATE_KEY`. Test dry-runs use a fixed
@@ -76,6 +79,20 @@ or secrets. Investigate `broadcast_failed`, `submission_unresolved`,
 remain operator-action conditions.
 Paid/Unknown reconciliation is anchored to the scanned block; a cursor reorg
 resets discovery to the deployment block. Work is replayed in bounded ranges.
+
+Before persisting or rebroadcasting a submission, the executor decodes its signed
+transaction and validates signer, chain, vault, nonce, hash, zero value and exact
+`settle(claimId)` calldata. It requires the fixed 700,000 gas limit and transaction
+type 0, 1 or 2, rejecting blob and account-authorization transactions. Startup and
+iteration validation precede cursor writes and rebroadcast. Invalid stored
+transactions or multiple unresolved submissions fail closed without replacing
+the checkpoint. Existing version-one checkpoints remain compatible: their signed
+pending transaction is checked against the currently configured signer.
+
+These checks do not replace exclusive process/account ownership: the executor
+has no interprocess lock or automatic nonce replacement. Fee quotes come from the
+configured RPC with no application fee ceiling; use a trusted endpoint and keep
+only the intended operational gas budget in the dedicated account.
 
 Corrupt or mismatched state stops startup. Preserve it privately and replay into
 a new file after inspecting any in-flight transaction and signer nonce. Do not
@@ -133,3 +150,6 @@ limits/configuration, AMB execution failures, executor nonce/gas/checkpoint heal
 and unsuccessful adapter calls. Alerts and cash balances are never payment
 authorization. See the [tested snapshots and gas evidence](AMB_VAULT_INTEGRATION.md)
 and [architecture diagrams](AMB_VAULT_ARCHITECTURE.md).
+The [security and ownership model](AMB_VAULT_SECURITY.md) states which failures
+the application can retry and which require external operators or product
+decisions.

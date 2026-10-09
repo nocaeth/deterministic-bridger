@@ -13,6 +13,10 @@ contract MockAMB {
     uint256 public deliveries;
     bytes public lastData;
     address public lastTarget;
+    address public reentryTarget;
+    bytes public reentryData;
+    bool public reentrySucceeded;
+    bytes public reentryResult;
 
     constructor(uint256 source, uint256 destination) {
         sourceChainId = source;
@@ -23,11 +27,19 @@ contract MockAMB {
         rejectSubmission = value;
     }
 
+    function setReentry(address target, bytes calldata data) external {
+        reentryTarget = target;
+        reentryData = data;
+    }
+
     function requireToPassMessage(address target, bytes calldata data, uint256 gasLimit)
         external
         returns (bytes32)
     {
         require(!rejectSubmission && gasLimit <= maxGasPerTx, "AMB_SUBMISSION");
+        if (reentryTarget != address(0)) {
+            (reentrySucceeded, reentryResult) = reentryTarget.call(reentryData);
+        }
         lastData = data;
         lastTarget = target;
         return bytes32(++submissions);

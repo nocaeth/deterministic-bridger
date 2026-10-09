@@ -4,6 +4,7 @@ pragma solidity ^0.8.35;
 import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
+import { IERC4626 } from "../src/interfaces/IERC4626.sol";
 import { INonceXDaiBridge } from "../src/interfaces/INonceXDaiBridge.sol";
 import { IHomeXDaiBridge } from "../src/interfaces/IHomeXDaiBridge.sol";
 import { IAMB, IAMBClaimReceiver } from "../src/interfaces/IAMB.sol";
@@ -15,10 +16,6 @@ import { MockAMB } from "../test/mocks/MockAMB.sol";
 import { DeployAmbVault } from "../script/DeployAmbVault.s.sol";
 import { DeployAmbRouter } from "../script/DeployAmbRouter.s.sol";
 import { MainnetAmbBridgeRouter } from "../src/MainnetAmbBridgeRouter.sol";
-
-interface IAssetVault {
-    function asset() external view returns (address);
-}
 
 contract AmbVaultForkTest is Test {
     address internal constant FOREIGN_AMB = 0x4C36d2919e407f0Cc2Ee3c993ccF8ac26d9CE64e;
@@ -34,7 +31,7 @@ contract AmbVaultForkTest is Test {
             0x264cadfbd942c81527ab9bd8494c60509fb89f95cd8dd1ebc0fec72fd64809cb
         );
         assertEq(bridge.erc20token(), ChainConstants.ETHEREUM_USDS);
-        assertEq(IAssetVault(ChainConstants.ETHEREUM_SUSDS).asset(), ChainConstants.ETHEREUM_USDS);
+        assertEq(IERC4626(ChainConstants.ETHEREUM_SUSDS).asset(), ChainConstants.ETHEREUM_USDS);
         assertEq(IAMB(FOREIGN_AMB).sourceChainId(), 1);
         assertEq(IAMB(FOREIGN_AMB).destinationChainId(), 100);
         assertGe(IAMB(FOREIGN_AMB).maxGasPerTx(), 700_000);

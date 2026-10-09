@@ -1,7 +1,7 @@
 import { open, readFile, rename } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Contract, Interface, JsonRpcProvider, Wallet, isAddress, keccak256 } from 'ethers';
+import { Contract, Interface, JsonRpcProvider, Transaction, Wallet, isAddress, keccak256 } from 'ethers';
 
 export const VAULT_ABI = [
   'event ClaimRegistered(bytes32 indexed claimId,address indexed payer,address indexed recipient,bytes32 bridgeNonce,uint256 amount,uint256 minShares)',
@@ -12,25 +12,51 @@ export const VAULT_ABI = [
 const abi = new Interface(VAULT_ABI);
 const topics = ['ClaimRegistered', 'ClaimPaid'].map(name => abi.getEvent(name).topicHash);
 const hex32 = /^0x[0-9a-f]{64}$/i;
+const settlementStatus = { Unknown: 0, Paid: 1, Ready: 5 };
+const settlementGasLimit = 700000n;
+
+function validateSubmission(id, submitted, scope) {
+  try {
+    const transaction = Transaction.from(submitted.rawTx);
+    if (!transaction.isSigned() || ![0, 1, 2].includes(transaction.type) || transaction.gasLimit !== settlementGasLimit
+        || transaction.hash !== submitted.hash || keccak256(submitted.rawTx) !== submitted.hash
+        || transaction.chainId !== BigInt(scope.chainId) || transaction.to?.toLowerCase() !== scope.vault.toLowerCase()
+        || (scope.signerAddress && transaction.from?.toLowerCase() !== scope.signerAddress.toLowerCase())
+        || transaction.data !== abi.encodeFunctionData('settle', [id]) || transaction.value !== 0n
+        || transaction.nonce !== submitted.nonce) throw new Error();
+  } catch { throw new Error('Invalid submitted transaction'); }
+}
+
+function validatePendingSubmissions(state, signerAddress) {
+  let unresolved = 0;
+  for (const [id, entry] of Object.entries(state.pending)) {
+    if (!entry.submitted) continue;
+    validateSubmission(id, entry.submitted, { ...state, signerAddress });
+    if (++unresolved > 1) throw new Error('Multiple unresolved transactions');
+  }
+}
 
 export async function loadCheckpoint(path, scope) {
+  const { chainId, vault, deploymentBlock } = scope;
   let state;
   try { state = JSON.parse(await readFile(path, 'utf8')); }
   catch (error) {
     if (error.code !== 'ENOENT') throw new Error('Invalid checkpoint; preserve it and replay into a new file');
-    state = { version: 1, ...scope, cursorBlock: scope.deploymentBlock - 1, cursorHash: null, pending: {} };
+    state = { version: 1, chainId, vault, deploymentBlock, cursorBlock: deploymentBlock - 1, cursorHash: null, pending: {} };
   }
-  if (state.version !== 1 || state.chainId !== scope.chainId || state.vault?.toLowerCase() !== scope.vault.toLowerCase()
-      || state.deploymentBlock !== scope.deploymentBlock) throw new Error('Checkpoint scope mismatch');
-  if (!Number.isSafeInteger(state.cursorBlock) || state.cursorBlock < scope.deploymentBlock - 1
+  if (state.version !== 1 || state.chainId !== chainId || state.vault?.toLowerCase() !== vault.toLowerCase()
+      || state.deploymentBlock !== deploymentBlock) throw new Error('Checkpoint scope mismatch');
+  if (!Number.isSafeInteger(state.cursorBlock) || state.cursorBlock < deploymentBlock - 1
       || (state.cursorHash !== null && !hex32.test(state.cursorHash)) || !state.pending
       || Array.isArray(state.pending) || typeof state.pending !== 'object') throw new Error('Invalid checkpoint schema');
   for (const [id, entry] of Object.entries(state.pending)) {
-    if (!hex32.test(id) || !Number.isSafeInteger(entry.attempts) || entry.attempts < 0
+    if (!hex32.test(id) || !entry || typeof entry !== 'object' || Array.isArray(entry)
+        || !Number.isSafeInteger(entry.attempts) || entry.attempts < 0
         || !Number.isSafeInteger(entry.nextAttemptAt) || entry.nextAttemptAt < 0) throw new Error('Invalid pending claim');
     if (entry.submitted && (!hex32.test(entry.submitted.hash) || !/^0x[0-9a-f]+$/i.test(entry.submitted.rawTx)
         || !Number.isSafeInteger(entry.submitted.nonce) || entry.submitted.nonce < 0)) throw new Error('Invalid submitted transaction');
   }
+  validatePendingSubmissions(state, scope.signerAddress);
   return state;
 }
 
@@ -83,6 +109,7 @@ export async function scanClaims(ctx) {
 
 export async function reconcileClaims(ctx) {
   const { state, provider } = ctx;
+  validatePendingSubmissions(state, ctx.signerAddress);
   // A dedicated signer has at most one unresolved nonce, including after a crash.
   for (const [id, entry] of Object.entries(state.pending)) {
     if (!entry.submitted) continue;
@@ -107,8 +134,8 @@ export async function reconcileClaims(ctx) {
     if (checked++ >= ctx.batchSize) break;
     try {
       const status = Number(await ctx.vault.settlementStatus(id, { blockTag: state.cursorBlock }));
-      if (status === 0 || status === 1) delete state.pending[id];
-      else if (status !== 5) defer(ctx, entry);
+      if (status === settlementStatus.Unknown || status === settlementStatus.Paid) delete state.pending[id];
+      else if (status !== settlementStatus.Ready) defer(ctx, entry);
     } catch { report(ctx, 'status_read_failed', id, entry); defer(ctx, entry); }
   }
 }
@@ -121,8 +148,9 @@ export async function settleReadyClaims(ctx) {
     if (checked++ >= ctx.batchSize) break;
     let submitted;
     try {
-      if (Number(await ctx.vault.settlementStatus(id)) !== 5) { defer(ctx, entry); continue; }
+      if (Number(await ctx.vault.settlementStatus(id)) !== settlementStatus.Ready) { defer(ctx, entry); continue; }
       submitted = await ctx.prepare(id);
+      validateSubmission(id, submitted, { ...ctx.state, signerAddress: ctx.signerAddress });
     } catch { report(ctx, 'prepare_failed', id, entry); defer(ctx, entry); continue; }
     // Persist the signed hash and nonce BEFORE broadcast, eliminating the lost-response window.
     const checkpoint = structuredClone(ctx.state);
@@ -136,6 +164,7 @@ export async function settleReadyClaims(ctx) {
 }
 
 export async function runOnce(ctx) {
+  validatePendingSubmissions(ctx.state, ctx.signerAddress);
   await scanClaims(ctx);
   await reconcileClaims(ctx);
   await saveCheckpoint(ctx.path, ctx.state);
@@ -162,7 +191,7 @@ async function main() {
   const path = resolve(process.env.VAULT_SETTLER_STATE_PATH || `.tmp/vault-settler-100-${vaultAddress.toLowerCase()}.json`);
   const directory = await open(dirname(path), 'r');
   try { await directory.sync(); } finally { await directory.close(); }
-  const state = await loadCheckpoint(path, { chainId: 100, vault: vaultAddress, deploymentBlock });
+  const state = await loadCheckpoint(path, { chainId: 100, vault: vaultAddress, deploymentBlock, signerAddress: signer.address });
   const ctx = {
     state, path, provider, vault, signerAddress: signer.address, now: Date.now,
     report: diagnostic => console.warn(`vault-settler ${JSON.stringify(diagnostic)}`),
@@ -176,8 +205,8 @@ async function main() {
       const nonce = await provider.getTransactionCount(signer.address, 'pending');
       const feeFields = fees.maxFeePerGas !== null && fees.maxPriorityFeePerGas !== null
         ? { type: 2, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas }
-        : { gasPrice: fees.gasPrice };
-      const rawTx = await signer.signTransaction({ ...transaction, ...feeFields, chainId: 100, nonce, gasLimit: 700000 });
+        : { type: 0, gasPrice: fees.gasPrice };
+      const rawTx = await signer.signTransaction({ ...transaction, ...feeFields, chainId: 100, nonce, gasLimit: settlementGasLimit });
       return { hash: keccak256(rawTx), rawTx, nonce };
     },
   };

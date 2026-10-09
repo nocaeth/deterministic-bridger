@@ -5,16 +5,17 @@ import { IAMB, IAMBClaimReceiver } from "./interfaces/IAMB.sol";
 import { IHomeXDaiBridge } from "./interfaces/IHomeXDaiBridge.sol";
 import { ISavingsXDaiAdapter } from "./interfaces/ISavingsXDaiAdapter.sol";
 import { VaultClaimLib } from "./libraries/VaultClaimLib.sol";
+import { ReentrancyGuard } from "./utils/ReentrancyGuard.sol";
+import { ChainConstants } from "./libraries/ChainConstants.sol";
 
-/// @notice Durable, authenticated claims against completed canonical xDAI transfers.
-contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
+/// @notice Registers AMB claims and settles executed canonical xDAI transfers into sDAI.
+contract SavingsXDaiSettlementVault is IAMBClaimReceiver, ReentrancyGuard {
     error InvalidConfig();
     error UnauthorizedMessage();
     error InvalidClaim();
     error ConflictingClaim();
     error InvalidMinimum();
     error InsufficientShares();
-    error ReentrantCall();
 
     enum ClaimStatus {
         Unknown,
@@ -46,7 +47,6 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
         uint256 minimumShares;
     }
     mapping(bytes32 => StoredClaim) private claims;
-    bool private settling;
 
     event ClaimRegistered(
         bytes32 indexed claimId,
@@ -70,10 +70,11 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
         address foreignBridge_
     ) {
         if (
-            block.chainid != 100 || address(homeBridge_).code.length == 0
+            block.chainid != ChainConstants.GNOSIS_CHAIN_ID || address(homeBridge_).code.length == 0
                 || address(homeAMB_).code.length == 0 || address(adapter_).code.length == 0
                 || sourceRouter_ == address(0) || foreignBridge_ == address(0)
-                || homeAMB_.sourceChainId() != 100 || homeAMB_.destinationChainId() != 1
+                || homeAMB_.sourceChainId() != ChainConstants.GNOSIS_CHAIN_ID
+                || homeAMB_.destinationChainId() != ChainConstants.ETHEREUM_CHAIN_ID
                 || homeBridge_.feeManagerContract() != address(0) || homeBridge_.decimalShift() != 0
         ) {
             revert InvalidConfig();
@@ -89,23 +90,27 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
         bridgeImplementationCodeHash = implementation.codehash;
     }
 
-    // shortcut: sponsor liquidity has no withdrawal path; design liabilities and delayed exits before accepting withdrawable LP capital
+    /// @notice Accepts permanent sponsor funding; this contract has no withdrawal function.
     receive() external payable { }
 
+    /// @notice Returns the immutable payload, payment state, and current settlement minimum.
     function getClaim(bytes32 id)
         external
         view
         returns (VaultClaimLib.Claim memory original, ClaimStatus status, uint256 minimumShares)
     {
-        StoredClaim storage c = claims[id];
-        return (c.original, c.status, c.minimumShares);
+        StoredClaim storage storedClaim = claims[id];
+        return (storedClaim.original, storedClaim.status, storedClaim.minimumShares);
     }
 
+    /// @notice Registers a source-router claim authenticated by the configured AMB.
+    /// @dev An identical replay preserves payment state and any lowered minimum.
     function registerClaim(VaultClaimLib.Claim calldata original) external returns (bytes32 id) {
-        if (settling) revert ReentrantCall();
+        _requireNotEntered();
         if (
-            block.chainid != 100 || msg.sender != address(homeAMB)
-                || homeAMB.messageSender() != sourceRouter || homeAMB.messageSourceChainId() != 1
+            block.chainid != ChainConstants.GNOSIS_CHAIN_ID || msg.sender != address(homeAMB)
+                || homeAMB.messageSender() != sourceRouter
+                || homeAMB.messageSourceChainId() != ChainConstants.ETHEREUM_CHAIN_ID
         ) {
             revert UnauthorizedMessage();
         }
@@ -117,16 +122,16 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
         id = VaultClaimLib.id(
             sourceRouter, foreignBridge, address(homeBridge), address(this), original.bridgeNonce
         );
-        StoredClaim storage c = claims[id];
-        if (c.status != ClaimStatus.Unknown) {
-            if (keccak256(abi.encode(c.original)) != keccak256(abi.encode(original))) {
+        StoredClaim storage storedClaim = claims[id];
+        if (storedClaim.status != ClaimStatus.Unknown) {
+            if (keccak256(abi.encode(storedClaim.original)) != keccak256(abi.encode(original))) {
                 revert ConflictingClaim();
             }
             return id;
         }
-        c.original = original;
-        c.status = ClaimStatus.Pending;
-        c.minimumShares = original.minShares;
+        storedClaim.original = original;
+        storedClaim.status = ClaimStatus.Pending;
+        storedClaim.minimumShares = original.minShares;
         emit ClaimRegistered(
             id,
             original.payer,
@@ -145,13 +150,17 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
         }
     }
 
+    /// @notice Reports whether a claim can settle under the supported bridge configuration.
     function settlementStatus(bytes32 id) public view returns (SettlementResult) {
-        StoredClaim storage c = claims[id];
-        if (c.status == ClaimStatus.Unknown) return SettlementResult.Unknown;
-        if (c.status == ClaimStatus.Paid) return SettlementResult.Paid;
+        StoredClaim storage storedClaim = claims[id];
+        if (storedClaim.status == ClaimStatus.Unknown) return SettlementResult.Unknown;
+        if (storedClaim.status == ClaimStatus.Paid) return SettlementResult.Paid;
         if (!_supportedBridge()) return SettlementResult.UnsupportedBridgeConfig;
-        bytes32 transferHash =
-            keccak256(abi.encodePacked(address(this), c.original.amount, c.original.bridgeNonce));
+        bytes32 transferHash = keccak256(
+            abi.encodePacked(
+                address(this), storedClaim.original.amount, storedClaim.original.bridgeNonce
+            )
+        );
         try homeBridge.numAffirmationsSigned(transferHash) returns (uint256 count) {
             try homeBridge.isAlreadyProcessed(count) returns (bool processed) {
                 if (!processed) return SettlementResult.WaitingForBridge;
@@ -161,12 +170,17 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
         } catch {
             return SettlementResult.UnsupportedBridgeConfig;
         }
-        if (address(this).balance < c.original.amount) return SettlementResult.WaitingForLiquidity;
+        if (address(this).balance < storedClaim.original.amount) {
+            return SettlementResult.WaitingForLiquidity;
+        }
         return SettlementResult.Ready;
     }
 
     function _supportedBridge() private view returns (bool) {
-        if (block.chainid != 100 || bridgeImplementation.codehash != bridgeImplementationCodeHash) {
+        if (
+            block.chainid != ChainConstants.GNOSIS_CHAIN_ID
+                || bridgeImplementation.codehash != bridgeImplementationCodeHash
+        ) {
             return false;
         }
         try homeBridge.implementation() returns (address implementation) {
@@ -186,31 +200,38 @@ contract SavingsXDaiSettlementVault is IAMBClaimReceiver {
         }
     }
 
-    function settle(bytes32 id) external returns (SettlementResult result, uint256 shares) {
-        if (settling) revert ReentrantCall();
-        settling = true;
+    /// @notice Pays a ready claim once; waiting, unknown, and paid claims are no-ops.
+    /// @dev Adapter failure or insufficient shares reverts the payment and preserves the claim.
+    function settle(bytes32 id)
+        external
+        nonReentrant
+        returns (SettlementResult result, uint256 shares)
+    {
         result = settlementStatus(id);
         if (result == SettlementResult.Ready) {
-            StoredClaim storage c = claims[id];
-            c.status = ClaimStatus.Paid;
-            shares = adapter.depositXDAI{ value: c.original.amount }(c.original.recipient);
-            if (shares == 0 || shares < c.minimumShares) revert InsufficientShares();
-            emit ClaimPaid(id, c.original.recipient, c.original.amount, shares);
+            StoredClaim storage storedClaim = claims[id];
+            storedClaim.status = ClaimStatus.Paid;
+            shares = adapter.depositXDAI{ value: storedClaim.original.amount }(
+                storedClaim.original.recipient
+            );
+            if (shares == 0 || shares < storedClaim.minimumShares) revert InsufficientShares();
+            emit ClaimPaid(id, storedClaim.original.recipient, storedClaim.original.amount, shares);
             result = SettlementResult.Paid;
         }
-        settling = false;
     }
 
+    /// @notice Allows only the pending claim's recipient to lower its settlement minimum.
     function lowerMinShares(bytes32 id, uint256 newMinimum) external {
-        if (settling) revert ReentrantCall();
-        StoredClaim storage c = claims[id];
+        _requireNotEntered();
+        StoredClaim storage storedClaim = claims[id];
         if (
-            c.status != ClaimStatus.Pending || msg.sender != c.original.recipient
-                || newMinimum > c.minimumShares
+            storedClaim.status != ClaimStatus.Pending
+                || msg.sender != storedClaim.original.recipient
+                || newMinimum > storedClaim.minimumShares
         ) {
             revert InvalidMinimum();
         }
         emit MinimumSharesLowered(id, newMinimum);
-        c.minimumShares = newMinimum;
+        storedClaim.minimumShares = newMinimum;
     }
 }

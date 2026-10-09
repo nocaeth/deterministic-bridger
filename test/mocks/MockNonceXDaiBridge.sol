@@ -12,6 +12,10 @@ contract MockNonceXDaiBridge {
     uint256 public nonceDelta = 1;
     address public lastReceiver;
     uint256 public lastAmount;
+    address public reentryTarget;
+    bytes public reentryData;
+    bool public reentrySucceeded;
+    bytes public reentryResult;
 
     event UserRequestForAffirmation(address recipient, uint256 value, bytes32 nonce);
 
@@ -40,8 +44,16 @@ contract MockNonceXDaiBridge {
         implementation = value;
     }
 
+    function setReentry(address target, bytes calldata data) external {
+        reentryTarget = target;
+        reentryData = data;
+    }
+
     function relayTokens(address receiver, uint256 amount) external {
         require(!rejectRelay, "LIMIT");
+        if (reentryTarget != address(0)) {
+            (reentrySucceeded, reentryResult) = reentryTarget.call(reentryData);
+        }
         require(token.transferFrom(msg.sender, address(this), pullShort ? amount - 1 : amount));
         emit UserRequestForAffirmation(receiver, amount, bytes32(nonce));
         nonce += nonceDelta;
