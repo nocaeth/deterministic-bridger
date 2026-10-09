@@ -32,10 +32,28 @@ threshold is successful execution.
 Run the separate required-RPC suite with
 `FOUNDRY_PROFILE=amb_vault_fork forge test -vv`; both RPC variables must exist.
 It exercises a USDS relay and real savings adapter entirely in local forks.
-Observed result: **2 passed, 0 failed** at the pinned blocks. The real adapter
+Observed final required-RPC result: **4 passed, 0 failed** at the pinned blocks. The real adapter
 deposit used **87,625 gas** (5 xDAI to a fresh recipient). Peak runner RSS was
 496,168 KiB. This verifies ordinary EVM contract behavior, not consensus-native
-mint timing.
+mint timing. Paired deployment scripts were dry-run with a fixed test key and
+reject a changed Ethereum deployer nonce; no transaction was broadcast.
+
+Callback measurements using the real savings adapter and bridge configuration,
+a mock AMB wrapper and a simulated execution marker:
+
+| Path | Observed gas, including mock AMB wrapper |
+| --- | ---: |
+| Fresh ready registration and conversion | 358,521 |
+| Duplicate Paid registration | 68,174 |
+| Registration with failed destination minimum | 311,142 |
+
+The 700k callback and 350k isolated child completed the real conversion in the
+fork. Local gas-exhaustion tests also preserve Pending registration. These are
+setup-sensitive fork measurements, not live AMB or native consensus-mint
+measurements. Keep staging gas headroom as a production gate. Final fork peak RSS
+was 266,444 KiB. Configured non-archive endpoints became unavailable for new reads
+at the pinned blocks; final checks used public Ethereum dRPC and the official
+Gnosis RPC instead, with the same snapshot and code-hash assertions.
 
 Primary source and deployment documentation:
 
@@ -55,6 +73,9 @@ upgradeability and validator assumptions remain part of application trust.
 
 - Validator FCR processing mode for the selected xDai and AMB lanes is unverified.
   Node safe tags alone do not establish validator configuration or a delivery SLA.
+  The official page read on 2026-10-09 describes FCR processing but its FAQ still
+  targets production rollout at the end of October 2026 and names xDai/Omnibridge.
+  It does not establish the selected arbitrary-message lane's live configuration.
 - Actual consensus reward mint ordering and absence of a recipient callback need
   a separately authorized staging transfer; vm.deal does not prove either.
 - Historical or future fee configuration is not proven by today's zero fee getter.

@@ -1,6 +1,6 @@
 # FCR AMB settlement vault implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execution and delegation have not been requested; this is a planning deliverable.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking. Implementation is now authorized. Production broadcast, funding and traffic changes remain unapproved.
 
 **Goal:** Bridge caller-funded Ethereum USDS or redeemed sUSDS into a shared Gnosis
 vault and issue sDAI through authenticated, durable, at-most-once claims.
@@ -118,32 +118,32 @@ VaultClaimLib defines the spec's Claim struct and
 bytes32 bridgeNonce) internal pure returns (bytes32)` with exactly the spec's
 domain/chain/address ordering. Do not derive identity from an AMB delivery ID.
 
-- [ ] Read the memory policy, then record allowlisted deployment fields at chosen
+- [x] Read the memory policy, then record allowlisted deployment fields at chosen
   Ethereum/Gnosis blocks: token, sUSDS asset, proxy/implementation addresses and
   code hashes, nonce, home processed API, fee manager/shift, adapter, AMB context
   APIs/max gas, source/destination chain IDs and observed lane processing modes.
   Fill integration evidence with actual public values and pinned source revisions.
   Exclude all credentials. If a field cannot be established, mark that production
   gate unverified with its specific required observation.
-- [ ] Write a required-RPC fork test using `vm.envString` for both URLs, unlike the
+- [x] Write a required-RPC fork test using `vm.envString` for both URLs, unlike the
   legacy optional smoke tests. Assert canonical token compatibility, getters,
   supported implementation, decimalShift=0 and feeManagerContract=0. This version
   intentionally supports no fee manager; a zero-rate nonzero manager needs a
   separately reviewed policy. Verify source relay logs' actual nonce against the
   getter and actual USDS movement. Record a failing compatibility assertion as a
   no-go result; do not weaken it to make the fork pass.
-- [ ] Write local tests for claim ID stability and domain changes. Assert changing
+- [x] Write local tests for claim ID stability and domain changes. Assert changing
   any configured router/bridge/vault address or bridge nonce changes the ID, while
   resending the same claim leaves it unchanged. Define the shared struct/ID and
   mocks only after the targeted test fails for missing types.
-- [ ] Build mocks with distinct actions: `MockNonceXDaiBridge` pulls tokens,
+- [x] Build mocks with distinct actions: `MockNonceXDaiBridge` pulls tokens,
   increments nonce and can reject relay; `MockHomeXDaiBridge.setProcessed(hash,
   bool)` changes only execution status; an above-limit fixture leaves that status
   false. `MockAMB` records submissions and provides `deliver(target, sourceSender,
   sourceChainId, data)` with temporary message context. Source rejection and
   callback failure are separate switches. These controls exist only in local
   test fixtures.
-- [ ] Run `forge test --match-contract VaultClaimLibTest` and the explicitly
+- [x] Run `forge test --match-contract VaultClaimLibTest` and the explicitly
   configured bridge-getter fork checks. These tests use existing chain contracts
   and protocol types only; they do not import application contracts from later
   tasks. Record
@@ -178,13 +178,13 @@ resendClaim(bytes32 claimId) returns (bytes32 ambMessageId);
 getClaim(bytes32 claimId) view returns (VaultClaimLib.Claim memory);
 ```
 
-- [ ] Build the source-only test fixture with `usds`, `susds`, `foreign`, `amb`,
+- [x] Build the source-only test fixture with `usds`, `susds`, `foreign`, `amb`,
   `router`, `payer`, `recipient`, a nonzero remote `homeBridge` and a nonzero
   remote `vault` address. Install assets using the current test's etch pattern.
   On simulated Ethereum chain 1, `_bridgeUSDS(amount, minimum)` and
   `_bridgeSavings(shares, minimum)` fund/approve the payer, call the respective
   `To` entry point and return its claim ID. No Gnosis application is needed here.
-- [ ] Write source tests for both assets and both recipient variants. For sUSDS,
+- [x] Write source tests for both assets and both recipient variants. For sUSDS,
   check the caller's shares burn, observed USDS assets match the claim, bridge
   destination is the configured vault, nonce matches the bridge event and allowance
   finishes at zero. Fund old router USDS separately and prove it is excluded.
@@ -204,24 +204,24 @@ getClaim(bytes32 claimId) view returns (VaultClaimLib.Claim memory);
   }
   ```
 
-- [ ] Run `forge test --match-contract MainnetAmbBridgeRouterTest` to establish
+- [x] Run `forge test --match-contract MainnetAmbBridgeRouterTest` to establish
   the failing behavior before implementation.
-- [ ] Implement the source sequence exactly as in the accompaniment guarantee:
+- [x] Implement the source sequence exactly as in the accompaniment guarantee:
   observed funding delta, nonce capture, exact relay balance deltas, nonce +1,
   allowance clearing, immutable claim storage and AMB submission with abi.encodeCall
   of IAMBClaimReceiver.registerClaim. Reject wrong chain/config/token, zero receiver/input/assets,
   insufficient funding and unsupported implementation. Use a simple storage
   reentrancy guard around all source mutations, including resend.
-- [ ] Add parameterized rollback checks for redemption failure, source limits,
+- [x] Add parameterized rollback checks for redemption failure, source limits,
   wrong nonce advancement, incorrect bridge token movement and AMB submission
   failure. Snapshot payer balances/allowance, bridge nonce/balance, router balance,
   source claim and AMB recorded submissions before the call; assert the entire
   snapshot is unchanged after revert. No generic external message method exists.
-- [ ] Implement resend from stored Claim. Assert unknown ID fails, a valid resend
+- [x] Implement resend from stored Claim. Assert unknown ID fails, a valid resend
   submits byte-identical callback calldata, the AMB delivery ID changes, no shares
   are redeemed and neither bridge nonce nor bridge balances change. There is no
   recipient/amount parameter to resend and no account-wide whitelist shortcut.
-- [ ] Run the targeted suite and fmt check; commit the source router and tests.
+- [x] Run the targeted suite and fmt check; commit the source router and tests.
 
 ## Task 3: Implement authenticated claims and isolated, gated payment
 
@@ -253,7 +253,7 @@ lowerMinShares(bytes32 claimId, uint256 newMinimum);
 receive() external payable;
 ```
 
-- [ ] Create the combined fixture with fields `usds`, `susds`, `foreign`, `home`,
+- [x] Create the combined fixture with fields `usds`, `susds`, `foreign`, `home`,
   `amb`, `adapter`, `router`, `vault`, `payer`, `recipient`. Deploy vault on
   simulated chain 100 bound to the predicted next router CREATE address, then
   router on simulated chain 1. Deploy no intervening contract between those
@@ -263,15 +263,15 @@ receive() external payable;
   supplies the stored source Claim through MockAMB. `_execute(id)` sets only the
   exact home processed marker; `_credit(amount)` increases native balance without
   invoking receive. Execution and actual credit must remain separate operations.
-- [ ] Write registration tests for correct AMB context, each incorrect context
+- [x] Write registration tests for correct AMB context, each incorrect context
   field, zero payload fields, identical duplicate, conflicting duplicate, duplicate
   after Paid and duplicate after lowering the minimum. Assert native funding alone
   never creates a claim. Run the targeted suite to establish missing behavior.
-- [ ] Implement registerClaim with source chain/sender/caller validation and ID
+- [x] Implement registerClaim with source chain/sender/caller validation and ID
   recomputation. Store original Claim, Pending status and effective minimum before
   optional settlement. Identical resends preserve the effective minimum and Paid
   state. Conflicting originals revert without overwriting any field.
-- [ ] Write ordering/gate checks: ample seed with no marker still waits; signatures
+- [x] Write ordering/gate checks: ample seed with no marker still waits; signatures
   without processed bit still wait; a marker for another amount/vault/nonce still
   waits; the exact processed marker plus enough cash permits payout. Test these
   three independent axes: authorization, canonical execution and cash.
@@ -292,31 +292,31 @@ receive() external payable;
   }
   ```
 
-- [ ] Implement settlementStatus and settle in the specified order. Unsupported
+- [x] Implement settlementStatus and settle in the specified order. Unsupported
   implementation/code hash, nonzero fee manager, nonzero shift or failed config
   reads prevent payment. Unknown/Paid/waiting conditions are no-ops. Ready claims
   pay exactly their amount under a settlement reentrancy guard. Set Paid before
   adapter call, then check positive/minimum shares so failure reverts atomically.
-- [ ] Write tests with claim > available cash, then credit and retry. Test both
+- [x] Write tests with claim > available cash, then credit and retry. Test both
   arrival orders, multiple independent claims, repeated callers and repeated Paid
   settlement. Assert a failed adapter deposit and an unattainable minimum preserve
   the pending claim/cash; recipient-only downward minimum adjustment permits a
   later attempt without changing the original resend payload.
-- [ ] Implement isolated self-call settlement in registerClaim with bounded gas
+- [x] Implement isolated self-call settlement in registerClaim with bounded gas
   and reserved parent gas. Catch without materializing revert bytes and emit
   SettlementAttemptFailed(ID) for a failed optional attempt. Skip optional payment
   if the budget is insufficient. Registration cannot share an active lock with
   its child settle call; prevent entry into registration/minimum mutation while
   settlement is active.
-- [ ] Use MockVaultAdapter to assert revert, zero shares, low shares, child gas
+- [x] Use MockVaultAdapter to assert revert, zero shares, low shares, child gas
   exhaustion and reentrant calls leave correct state. Verify registration can
   succeed after child failure; separately simulate insufficient registration gas
   and complete recovery by resending the stored source claim. Claim payout remains
   at most once under repeated deliveries and local retries.
-- [ ] Add payable receive with no claim/payment side effects. Document the sponsor
+- [x] Add payable receive with no claim/payment side effects. Document the sponsor
   liquidity withdrawal limit using the exact shortcut comment from the design.
   Do not add a sweep, LP withdrawal, generic executor or timeout cancellation.
-- [ ] Run targeted router/vault tests and fmt check; commit the vault and tests.
+- [x] Run targeted router/vault tests and fmt check; commit the vault and tests.
 
 ## Task 4: Verify the combined protocol's state invariants
 
@@ -329,21 +329,21 @@ canonical execution, actual credit, settlement, resend and minimum-adjustment
 actions. Keep a local independent accounting model; do not merely assert values
 copied from the contract under test.
 
-- [ ] Write an invariant handler that tracks IDs, original recipients/amounts,
+- [x] Write an invariant handler that tracks IDs, original recipients/amounts,
   independent successful adapter deposits and pending/paid state. Limit actor and
   claim counts so fuzzing respects the resource policy. Use local mocks only.
-- [ ] Assert each ID pays at most once; immutable identity/amount never change;
+- [x] Assert each ID pays at most once; immutable identity/amount never change;
   paid IDs had authenticated registration and exact canonical execution; total
   asset payouts match successful adapter deposits; vault cash is seed/credits/
   donations less payouts. Claim minima may only move downward by the recipient.
-- [ ] Fuzz duplicate messages, ordering changes, limited credit, adapter failures
+- [x] Fuzz duplicate messages, ordering changes, limited credit, adapter failures
   and resends. Run `forge test --match-contract AmbVaultInvariantTest`. Repair
   actual contract/model discrepancies before broadening runs.
-- [ ] On pinned forks, compare the actual emitted foreign nonce with the captured
+- [x] On pinned forks, compare the actual emitted foreign nonce with the captured
   nonce and validate home hash/processed semantics against real implementation
   code. Verify runtime supported-config checks reject simulated proxy/fee changes.
   Explicitly record that changing fee settings back cannot prove historical fees.
-- [ ] Re-run targeted protocol suites after fixes, then commit invariant/fork tests
+- [x] Re-run targeted protocol suites after fixes, then commit invariant/fork tests
   and the evidence update. No test should claim that local EVM funding reproduces
   consensus-native minting.
 
@@ -368,27 +368,27 @@ Write using a temporary file and rename, with mode 0600. CLI fields are
 GNOSIS_RPC_URL, AMB_VAULT, AMB_VAULT_DEPLOYMENT_BLOCK, VAULT_SETTLER_PRIVATE_KEY,
 VAULT_SETTLER_STATE_PATH; validate poll/range/backoff as bounded positive values.
 
-- [ ] Write Node tests for empty start, historic pending claims, duplicate logs,
+- [x] Write Node tests for empty start, historic pending claims, duplicate logs,
   paid reconciliation, missing/corrupt/mismatched checkpoints, reorged cursors,
   interrupted write, adapter revert, RPC timeout, lost receipt and restart with
   an already-submitted transaction. Test fixture logs include block/hash/index
   information, and use actual new event ABI encoding.
-- [ ] Run `node --test script/test/vault-settler.test.mjs` to see missing behavior.
-- [ ] Implement bounded log scanning from deploymentBlock with stored cursor hash
+- [x] Run `node --test script/test/vault-settler.test.mjs` to see missing behavior.
+- [x] Implement bounded log scanning from deploymentBlock with stored cursor hash
   validation. On invalid/missing checkpoints replay bounded ranges from deployment
   until caught up, reconstruct pending IDs and reconcile via getters. Write cursor
   and pending updates atomically; failed reads never advance past unprocessed work.
-- [ ] Implement per-ID status checking and isolated single-claim transactions with
+- [x] Implement per-ID status checking and isolated single-claim transactions with
   one serialized signer nonce stream. Poll submitted receipts/nonce state before
   deciding to resend; record a transaction hash as soon as it is returned. Paid
   getter/receipt evidence removes work; timeouts and adapter errors retain it with
   capped backoff. Strip credential-bearing RPC details from persisted errors/logs.
-- [ ] Add CLI polling with graceful shutdown and runOnce import guard. Native
+- [x] Add CLI polling with graceful shutdown and runOnce import guard. Native
   balance changes are only wake-up hints. Missing source registrations are handled
   by source resend/manual frontend recovery, not fabricated local claims. Support
   multiple independent executors through the vault's idempotency, not a distributed
   lock. Gas comes from the dedicated executor account.
-- [ ] Add `"test:vault-settler": "node --test script/test/vault-settler.test.mjs"`;
+- [x] Add `"test:vault-settler": "node --test script/test/vault-settler.test.mjs"`;
   run that command and `node --check script/vault-settler.mjs`; commit the executor.
 
 ## Task 6: Deployment, integration docs and measured rollout gates
@@ -402,29 +402,29 @@ executor. Default legacy deployment commands retain their existing behavior.
 **Produces:** Dry-run deployment/configuration checks, complete frontend field/event
 mapping and an operations checklist with explicit production authorization required.
 
-- [ ] Write deployment scripts using the existing Foundry Script pattern. The
+- [x] Write deployment scripts using the existing Foundry Script pattern. The
   Gnosis script reads EXPECTED_MAINNET_AMB_ROUTER and verified local HOME_XDAI_BRIDGE,
   GNOSIS_AMB, SAVINGS_XDAI_ADAPTER. The Ethereum script reads actual AMB_VAULT,
   HOME_XDAI_BRIDGE, ETHEREUM_AMB and canonical foreign bridge. Predict the dedicated
   mainnet deployer's next CREATE address before the Gnosis deployment. If its
   nonce changed, refuse activation/funding and redeploy correctly. Keep both
   directions immutable; use no initializer to repair a mismatch.
-- [ ] Extend .env.example with the new public/configuration names and blank
+- [x] Extend .env.example with the new public/configuration names and blank
   secret placeholders. Keep executor key distinct from deployment key. Document
   Sourcify verification, chain assertions, config getters and ABI availability
   before traffic. Do not invent current deployed addresses for the new contracts.
-- [ ] Measure callback and real-adapter child gas on the supported configuration,
+- [x] Measure callback and real-adapter child gas on the supported configuration,
   exercising fresh/duplicate/paid registration and failed optional conversion.
   Initial budgets are 700000/350000/100000 as specified. Record measurements and
   assert budget headroom plus AMB maxGas compatibility before freezing constants.
   Check the optional call cannot exhaust the parent's completion reserve.
-- [ ] Document all four source methods, approval requirements, ClaimBridged ID
+- [x] Document all four source methods, approval requirements, ClaimBridged ID
   extraction, original vs effective minima, AMB context validation, every frontend
   state, reload recovery, manual settle and exceptional stored-claim resend.
   Explain absence of native-mint callback and no browser duty to drive processing.
   There is no frontend application in this repository; deliver the integration
   contract/docs here and do not invent a UI project.
-- [ ] Document seed as sponsored/non-withdrawable and executor gas as separate;
+- [x] Document seed as sponsored/non-withdrawable and executor gas as separate;
   do not describe a withdrawable LP pool. Add limits, fees, message delivery,
   implementation changes, reorgs, executor failures and canonical non-delivery to
   the runbook. Monitor pending age/cash, processed markers, callback status and
@@ -442,21 +442,25 @@ mapping and an operations checklist with explicit production authorization requi
   small staging transfer must observe actual reward mint timing, callback absence,
   message ordering, executor completion and restart recovery. Record source/dest
   block numbers, tx hashes, amounts and resulting shares without exposing keys.
-- [ ] Run `forge fmt --check`, the full `forge test`, `forge build`, existing
+- [x] Run `forge fmt --check`, the full `forge test`, `forge build`, existing
   `npm run test:actions`, and new `npm run test:vault-settler` within policy budgets.
   Fork verification must use the required-RPC new suite; unset legacy optional
   tests are not recorded as live passes. Review the whole change for authorization,
   replay, cash/fee accounting and recovery before proposing production activation.
-- [ ] Commit scripts/docs/config. Present evidence, outstanding gates and a
+- [x] Commit scripts/docs/config. Present evidence, outstanding gates and a
   concrete deployment/traffic-change proposal for explicit authorization.
 
 ## Completion and planning limits
 
-The planning branch contains this plan and its design only. Unit tests, integration
-forks, measured gas budgets, live FCR lane activation and production recovery
-procedures have not been validated by writing these documents.
+Implementation, unit/stateful tests, required-RPC forks, deployment dry-runs and
+setup-sensitive adapter/callback gas measurements are now present. See
+[execution evidence](../../AMB_VAULT_INTEGRATION.md) and
+[architecture and funds-flow diagrams](../../AMB_VAULT_ARCHITECTURE.md). The two
+uncompleted checklist items retain production decisions/staging observations;
+dry-run scripts and local/fork ordering checks already passed. Live FCR lanes,
+consensus mint timing, and production recovery acceptance remain unverified.
 
-Implementation is complete only when the listed tests pass with observed results,
-existing deterministic flows remain available and deployment evidence gates are
-satisfied. A compatible protocol implementation does not itself authorize a
+Production readiness requires the listed tests with observed results, continued
+availability of the deterministic flow and satisfaction of deployment evidence
+gates. The locally verified implementation is not production activation. A compatible protocol implementation does not itself authorize a
 production deployment, irreversible buffer donation or migration of users.

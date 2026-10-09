@@ -151,7 +151,7 @@ async function main() {
     throw new Error('Wrong chain or missing vault code');
   const signer = new Wallet(process.env.VAULT_SETTLER_PRIVATE_KEY, provider);
   const vault = new Contract(vaultAddress, VAULT_ABI, signer);
-  const path = resolve(process.env.VAULT_SETTLER_STATE_PATH ?? `.tmp/vault-settler-100-${vaultAddress.toLowerCase()}.json`);
+  const path = resolve(process.env.VAULT_SETTLER_STATE_PATH || `.tmp/vault-settler-100-${vaultAddress.toLowerCase()}.json`);
   const state = await loadCheckpoint(path, { chainId: 100, vault: vaultAddress, deploymentBlock });
   const ctx = {
     state, path, provider, vault, signerAddress: signer.address, now: Date.now,

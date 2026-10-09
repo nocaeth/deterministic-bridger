@@ -6,9 +6,15 @@ import { Vm } from "forge-std/Vm.sol";
 import { IERC20 } from "../src/interfaces/IERC20.sol";
 import { INonceXDaiBridge } from "../src/interfaces/INonceXDaiBridge.sol";
 import { IHomeXDaiBridge } from "../src/interfaces/IHomeXDaiBridge.sol";
-import { IAMB } from "../src/interfaces/IAMB.sol";
+import { IAMB, IAMBClaimReceiver } from "../src/interfaces/IAMB.sol";
 import { ISavingsXDaiAdapter } from "../src/interfaces/ISavingsXDaiAdapter.sol";
 import { ChainConstants } from "../src/libraries/ChainConstants.sol";
+import { VaultClaimLib } from "../src/libraries/VaultClaimLib.sol";
+import { SavingsXDaiSettlementVault as Vault } from "../src/SavingsXDaiSettlementVault.sol";
+import { MockAMB } from "../test/mocks/MockAMB.sol";
+import { DeployAmbVault } from "../script/DeployAmbVault.s.sol";
+import { DeployAmbRouter } from "../script/DeployAmbRouter.s.sol";
+import { MainnetAmbBridgeRouter } from "../src/MainnetAmbBridgeRouter.sol";
 
 interface IAssetVault {
     function asset() external view returns (address);
@@ -92,5 +98,94 @@ contract AmbVaultForkTest is Test {
         assertEq(IERC20(ChainConstants.GNOSIS_SDAI).balanceOf(recipient) - beforeShares, shares);
         assertLt(used, 250_000, "adapter must leave room inside 350k settlement budget");
         emit log_named_uint("real_adapter_gas", used);
+    }
+
+    function testCallbackBudgetWithRealAdapterAndSimulatedExecutionMarker() external {
+        vm.createSelectFork(vm.envString("GNOSIS_RPC_URL"), 48_668_463);
+        IHomeXDaiBridge home = IHomeXDaiBridge(ChainConstants.GNOSIS_XDAI_BRIDGE);
+        MockAMB amb = new MockAMB(100, 1);
+        address source = address(0x1234);
+        Vault vault = new Vault(
+            home,
+            IAMB(address(amb)),
+            ISavingsXDaiAdapter(ADAPTER),
+            source,
+            ChainConstants.ETHEREUM_XDAI_BRIDGE
+        );
+        vm.deal(address(vault), 20 ether);
+        VaultClaimLib.Claim memory c = VaultClaimLib.Claim(
+            bytes32(uint256(9000)), address(this), address(0xA11CE), 5 ether, 1
+        );
+        bytes32 transferHash = keccak256(abi.encodePacked(address(vault), c.amount, c.bridgeNonce));
+        // Only the execution marker is simulated; configuration and savings conversion use real contracts.
+        vm.mockCall(
+            address(home),
+            abi.encodeCall(home.numAffirmationsSigned, (transferHash)),
+            abi.encode(uint256(1 << 255))
+        );
+        uint256 beforeGas = gasleft();
+        (bool success, bytes memory result) = amb.deliver(
+            address(vault), source, 1, abi.encodeCall(IAMBClaimReceiver.registerClaim, (c)), 700_000
+        );
+        uint256 used = beforeGas - gasleft();
+        assertTrue(success);
+        bytes32 id = abi.decode(result, (bytes32));
+        assertEq(uint256(vault.settlementStatus(id)), uint256(Vault.SettlementResult.Paid));
+        assertLt(used, 600_000);
+        emit log_named_uint("ready_callback_with_mock_AMB_gas", used);
+        beforeGas = gasleft();
+        (success,) = amb.deliver(
+            address(vault), source, 1, abi.encodeCall(IAMBClaimReceiver.registerClaim, (c)), 700_000
+        );
+        assertTrue(success);
+        emit log_named_uint("paid_duplicate_callback_with_mock_AMB_gas", beforeGas - gasleft());
+
+        c.bridgeNonce = bytes32(uint256(9001));
+        c.minShares = type(uint256).max;
+        transferHash = keccak256(abi.encodePacked(address(vault), c.amount, c.bridgeNonce));
+        vm.mockCall(
+            address(home),
+            abi.encodeCall(home.numAffirmationsSigned, (transferHash)),
+            abi.encode(uint256(1 << 255))
+        );
+        beforeGas = gasleft();
+        (success, result) = amb.deliver(
+            address(vault), source, 1, abi.encodeCall(IAMBClaimReceiver.registerClaim, (c)), 700_000
+        );
+        assertTrue(success);
+        id = abi.decode(result, (bytes32));
+        (, Vault.ClaimStatus status,) = vault.getClaim(id);
+        assertEq(uint256(status), uint256(Vault.ClaimStatus.Pending));
+        assertEq(address(vault).balance, 15 ether);
+        emit log_named_uint("failed_minimum_callback_with_mock_AMB_gas", beforeGas - gasleft());
+    }
+
+    function testPairedDeploymentScriptsDryRunAndRejectChangedNonce() external {
+        uint256 mainnet = vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), 26_154_748);
+        uint256 key = 0x123456;
+        address deployer = vm.addr(key);
+        uint256 nonce = vm.getNonce(deployer);
+        address expected = vm.computeCreateAddress(deployer, nonce);
+        vm.setEnv("PRIVATE_KEY", vm.toString(key));
+        vm.setEnv("EXPECTED_MAINNET_DEPLOYER_NONCE", vm.toString(nonce));
+        vm.setEnv("EXPECTED_MAINNET_AMB_ROUTER", vm.toString(expected));
+        vm.setEnv("GNOSIS_AMB", vm.toString(HOME_AMB));
+        vm.setEnv("ETHEREUM_AMB", vm.toString(FOREIGN_AMB));
+        vm.setEnv("SAVINGS_XDAI_ADAPTER", vm.toString(ADAPTER));
+        vm.setEnv("HOME_XDAI_BRIDGE", vm.toString(ChainConstants.GNOSIS_XDAI_BRIDGE));
+        vm.setEnv("ETHEREUM_XDAI_BRIDGE", vm.toString(ChainConstants.ETHEREUM_XDAI_BRIDGE));
+        vm.createSelectFork(vm.envString("GNOSIS_RPC_URL"), 48_668_463);
+        Vault vault = (new DeployAmbVault()).run();
+        assertEq(vault.sourceRouter(), expected);
+        vm.setEnv("AMB_VAULT", vm.toString(address(vault)));
+        vm.selectFork(mainnet);
+        DeployAmbRouter script = new DeployAmbRouter();
+        vm.setEnv("EXPECTED_MAINNET_DEPLOYER_NONCE", vm.toString(nonce + 1));
+        vm.expectRevert("DEPLOYER_NONCE_CHANGED");
+        script.run();
+        vm.setEnv("EXPECTED_MAINNET_DEPLOYER_NONCE", vm.toString(nonce));
+        MainnetAmbBridgeRouter router = script.run();
+        assertEq(address(router), expected);
+        assertEq(router.gnosisVault(), address(vault));
     }
 }

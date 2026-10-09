@@ -75,8 +75,7 @@ contract AmbVaultHandler is AmbVaultFixture {
         vm.prank(recipient);
         try vault.lowerMinShares(id, minimum) {
             model[id].minimum = minimum;
-        }
-            catch { }
+        } catch { }
     }
 
     function adapterFailure(bool fail) external {

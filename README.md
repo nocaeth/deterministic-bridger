@@ -1,5 +1,15 @@
 # Deterministic Bridger
 
+The new **FCR-assisted AMB vault route** is implemented on this branch alongside
+the deterministic route below. It atomically bridges caller funds and sends an
+authenticated claim to a shared Gnosis vault, with durable completion and
+at-most-once payouts. It has not been deployed.
+
+Start with the [architecture and funds-flow diagrams](docs/AMB_VAULT_ARCHITECTURE.md),
+then [frontend integration](docs/AMB_VAULT_FRONTEND.md),
+[operations](docs/AMB_VAULT_OPERATIONS.md), and
+[verified bridge/fork evidence](docs/AMB_VAULT_INTEGRATION.md).
+
 Deterministic Bridger routes mainnet USDS through the canonical xDai bridge to a
 counterfactual Gnosis receiver, then converts the bridged xDAI into sDAI for the
 intended deterministic receiver. Users can also submit sUSDS; the router redeems
